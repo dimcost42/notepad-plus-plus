@@ -1,0 +1,6 @@
+Target dependency graph (3 targets)
+Target 'ScintillaTest' in project 'ScintillaTest'
+➜ Implicit dependency on target 'Scintilla' in project 'Scintilla' via file 'Scintilla.framework' in build phase 'Link Binary'
+➜ Implicit dependency on target 'lexilla' in project 'Lexilla' via file 'liblexilla.dylib' in build phase 'Link Binary'
+Target 'lexilla' in project 'Lexilla' (no dependencies)
+Target 'Scintilla' in project 'Scintilla' (no dependencies)
