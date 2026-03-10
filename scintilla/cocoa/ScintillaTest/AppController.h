@@ -31,6 +31,13 @@
   ScintillaView *sciExtra;
 
   NSView *mEditorHost;
+  NSSplitView *mEditorSplitView;
+  NSView *mEditorTabContainer;
+  NSView *mSearchResultContainer;
+  NSTableView *mSearchResultsTableView;
+  NSTextField *mSearchResultsSummaryLabel;
+  NSMutableArray *mSearchResultEntries;
+  BOOL mSearchResultsVisible;
   NSSplitView *mWorkspaceSplitView;
   NSTabView *mSidebarTabView;
   NSTableView *mFunctionTableView;

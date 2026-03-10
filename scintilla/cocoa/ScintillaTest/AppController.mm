@@ -159,6 +159,21 @@ static NSStringEncoding nppEncodingEucKr()
 - (void) clearComparisonMarkers;
 - (void) applyComparisonMarkersBetweenEditor: (ScintillaView *) left rightEditor: (ScintillaView *) right;
 - (void) runAutosaveIfNeeded;
+- (void) setSearchResultsPanelVisible: (BOOL) visible;
+- (void) clearSearchResults;
+- (void) searchResultsActivated: (id) sender;
+- (void) closeSearchResultsPanel: (id) sender;
+- (void) collectSearchResultsFromText: (NSString *) text
+						  sourcePath: (NSString *) sourcePath
+						 sourceTitle: (NSString *) sourceTitle
+							   query: (NSString *) query
+							   regex: (BOOL) regex
+						   matchCase: (BOOL) matchCase
+						   wholeWord: (BOOL) wholeWord
+						resultEntries: (NSMutableArray *) resultEntries
+							 maxHits: (NSUInteger) maxHits
+						  stopSearch: (BOOL *) stopSearch;
+- (void) sortSearchResultEntries;
 
 - (void) saveSessionState;
 - (BOOL) restoreSessionState;
@@ -268,6 +283,7 @@ static NSStringEncoding nppEncodingEucKr()
 	[mMacroSteps release];
 	[mNamedMacros release];
 	[mPluginDescriptors release];
+	[mSearchResultEntries release];
 	[mSearchPanel release];
 	[mPreferencesWindow release];
 	[mMainToolbar release];
@@ -287,6 +303,7 @@ static NSStringEncoding nppEncodingEucKr()
 	mFunctionEntries = [[NSMutableArray alloc] init];
 	mProjectEntries = [[NSMutableArray alloc] init];
 	mProjectRootPaths = [[NSMutableArray alloc] init];
+	mSearchResultEntries = [[NSMutableArray alloc] init];
 	mMacroSteps = [[NSMutableArray alloc] init];
 	mNamedMacros = [[NSMutableArray alloc] init];
 	mPluginDescriptors = [[NSMutableArray alloc] init];
@@ -314,6 +331,7 @@ static NSStringEncoding nppEncodingEucKr()
 	mAutosaveEnabled = YES;
 	mNextAutosaveTime = [NSDate timeIntervalSinceReferenceDate] + kNppMacAutosaveIntervalSeconds;
 	mComparedFilePath = nil;
+	mSearchResultsVisible = NO;
 	mSidebarVisible = [defaults objectForKey: kNppMacPrefShowSidebarKey] ? [defaults boolForKey: kNppMacPrefShowSidebarKey] : YES;
 	mStatusBarVisible = [defaults objectForKey: kNppMacPrefShowStatusBarKey] ? [defaults boolForKey: kNppMacPrefShowStatusBarKey] : YES;
 
@@ -427,11 +445,102 @@ static NSStringEncoding nppEncodingEucKr()
 		[mWorkspaceSplitView setPosition: 260 ofDividerAtIndex: 0];
 	}
 
-	mTabView = [[[NSTabView alloc] initWithFrame: [mEditorHost bounds]] autorelease];
+	mEditorSplitView = [[[NSSplitView alloc] initWithFrame: [mEditorHost bounds]] autorelease];
+	[mEditorSplitView setVertical: NO];
+	[mEditorSplitView setDividerStyle: NSSplitViewDividerStyleThin];
+	[mEditorSplitView setAutoresizingMask: NSViewWidthSizable | NSViewHeightSizable];
+	[mEditorHost addSubview: mEditorSplitView];
+
+	mEditorTabContainer = [[[NSView alloc] initWithFrame: [mEditorHost bounds]] autorelease];
+	[mEditorTabContainer setAutoresizingMask: NSViewWidthSizable | NSViewHeightSizable];
+	[mEditorSplitView addSubview: mEditorTabContainer];
+
+	CGFloat resultsHeight = 190.0;
+	mSearchResultContainer = [[[NSView alloc] initWithFrame: NSMakeRect(0, 0, [mEditorHost bounds].size.width, resultsHeight)] autorelease];
+	[mSearchResultContainer setAutoresizingMask: NSViewWidthSizable | NSViewHeightSizable];
+	[mSearchResultContainer setWantsLayer: YES];
+	[[mSearchResultContainer layer] setBackgroundColor: [[NSColor colorWithCalibratedWhite: 0.975 alpha: 1.0] CGColor]];
+	[mEditorSplitView addSubview: mSearchResultContainer];
+
+	NSView *resultsHeader = [[[NSView alloc] initWithFrame: NSMakeRect(0, resultsHeight - 30, [mSearchResultContainer bounds].size.width, 30)] autorelease];
+	[resultsHeader setAutoresizingMask: NSViewWidthSizable | NSViewMinYMargin];
+	[resultsHeader setWantsLayer: YES];
+	[[resultsHeader layer] setBackgroundColor: [[NSColor colorWithCalibratedWhite: 0.94 alpha: 1.0] CGColor]];
+	[mSearchResultContainer addSubview: resultsHeader];
+
+	mSearchResultsSummaryLabel = [[[NSTextField alloc] initWithFrame: NSMakeRect(12, 6, [resultsHeader bounds].size.width - 54, 18)] autorelease];
+	[mSearchResultsSummaryLabel setAutoresizingMask: NSViewWidthSizable];
+	[mSearchResultsSummaryLabel setEditable: NO];
+	[mSearchResultsSummaryLabel setBordered: NO];
+	[mSearchResultsSummaryLabel setDrawsBackground: NO];
+	[mSearchResultsSummaryLabel setFont: [NSFont systemFontOfSize: 12]];
+	[mSearchResultsSummaryLabel setTextColor: [NSColor secondaryLabelColor]];
+	[mSearchResultsSummaryLabel setStringValue: @"Search Results"];
+	[resultsHeader addSubview: mSearchResultsSummaryLabel];
+
+	NSButton *closeResultsButton = [[[NSButton alloc] initWithFrame: NSMakeRect([resultsHeader bounds].size.width - 30, 5, 22, 20)] autorelease];
+	[closeResultsButton setAutoresizingMask: NSViewMinXMargin];
+	[closeResultsButton setBezelStyle: NSBezelStyleRoundRect];
+	[closeResultsButton setTitle: @"x"];
+	[closeResultsButton setTarget: self];
+	[closeResultsButton setAction: @selector(closeSearchResultsPanel:)];
+	[resultsHeader addSubview: closeResultsButton];
+
+	NSScrollView *resultsScroll = [[[NSScrollView alloc] initWithFrame: NSMakeRect(0, 0, [mSearchResultContainer bounds].size.width, [mSearchResultContainer bounds].size.height - 30)] autorelease];
+	[resultsScroll setAutoresizingMask: NSViewWidthSizable | NSViewHeightSizable];
+	[resultsScroll setHasVerticalScroller: YES];
+	[resultsScroll setHasHorizontalScroller: YES];
+	[mSearchResultContainer addSubview: resultsScroll];
+
+	mSearchResultsTableView = [[[NSTableView alloc] initWithFrame: [resultsScroll bounds]] autorelease];
+	[mSearchResultsTableView setAutoresizingMask: NSViewWidthSizable | NSViewHeightSizable];
+	[mSearchResultsTableView setUsesAlternatingRowBackgroundColors: YES];
+	[mSearchResultsTableView setAllowsColumnReordering: YES];
+	[mSearchResultsTableView setAllowsColumnResizing: YES];
+	[mSearchResultsTableView setGridStyleMask: NSTableViewSolidHorizontalGridLineMask];
+	[mSearchResultsTableView setRowHeight: 22.0];
+	[mSearchResultsTableView setIntercellSpacing: NSMakeSize(4, 2)];
+	[mSearchResultsTableView setDataSource: self];
+	[mSearchResultsTableView setDelegate: self];
+	[mSearchResultsTableView setTarget: self];
+	[mSearchResultsTableView setAction: @selector(searchResultsActivated:)];
+	[mSearchResultsTableView setDoubleAction: @selector(searchResultsActivated:)];
+
+	NSTableColumn *resultFileColumn = [[[NSTableColumn alloc] initWithIdentifier: @"resultFile"] autorelease];
+	[resultFileColumn setTitle: @"File"];
+	[resultFileColumn setWidth: 250];
+	[[resultFileColumn dataCell] setFont: [NSFont systemFontOfSize: 12]];
+	[resultFileColumn setSortDescriptorPrototype: [[[NSSortDescriptor alloc] initWithKey: @"sortFile"
+																				ascending: YES
+																				 selector: @selector(localizedCaseInsensitiveCompare:)] autorelease]];
+	[mSearchResultsTableView addTableColumn: resultFileColumn];
+
+	NSTableColumn *resultLineColumn = [[[NSTableColumn alloc] initWithIdentifier: @"resultLine"] autorelease];
+	[resultLineColumn setTitle: @"Line"];
+	[resultLineColumn setWidth: 76];
+	[[resultLineColumn dataCell] setFont: [NSFont systemFontOfSize: 12]];
+	[resultLineColumn setSortDescriptorPrototype: [[[NSSortDescriptor alloc] initWithKey: @"line" ascending: YES] autorelease]];
+	[mSearchResultsTableView addTableColumn: resultLineColumn];
+
+	NSTableColumn *resultSnippetColumn = [[[NSTableColumn alloc] initWithIdentifier: @"resultSnippet"] autorelease];
+	[resultSnippetColumn setTitle: @"Text"];
+	[resultSnippetColumn setWidth: 560];
+	[[resultSnippetColumn dataCell] setFont: [NSFont fontWithName: @"Menlo" size: 12]];
+	[resultSnippetColumn setSortDescriptorPrototype: [[[NSSortDescriptor alloc] initWithKey: @"snippet"
+																				  ascending: YES
+																				   selector: @selector(localizedCaseInsensitiveCompare:)] autorelease]];
+	[mSearchResultsTableView addTableColumn: resultSnippetColumn];
+
+	[resultsScroll setDocumentView: mSearchResultsTableView];
+
+	[mEditorSplitView adjustSubviews];
+	[self setSearchResultsPanelVisible: NO];
+
+	mTabView = [[[NSTabView alloc] initWithFrame: [mEditorTabContainer bounds]] autorelease];
 	[mTabView setAutoresizingMask: NSViewWidthSizable | NSViewHeightSizable];
 	[mTabView setDelegate: self];
 	[mTabView setTabViewType: NSTopTabsBezelBorder];
-	[mEditorHost addSubview: mTabView];
+	[mEditorTabContainer addSubview: mTabView];
 
 	mStatusBar = [[[NSTextField alloc] initWithFrame: NSMakeRect(0, 0, bounds.size.width, 22)] autorelease];
 	[mStatusBar setEditable: NO];
@@ -1578,6 +1687,182 @@ willBeInsertedIntoToolbar: (BOOL) flag
 		[mEditor setStatusText: [NSString stringWithFormat: @"Autosaved %lu file(s)", (unsigned long)saved]];
 }
 
+- (void) setSearchResultsPanelVisible: (BOOL) visible
+{
+	if (mEditorSplitView == nil || mSearchResultContainer == nil || mEditorTabContainer == nil)
+		return;
+
+	mSearchResultsVisible = visible;
+	NSRect bounds = [mEditorSplitView bounds];
+	CGFloat fullHeight = bounds.size.height;
+
+	if (!visible) {
+		[mSearchResultContainer setHidden: YES];
+		[mEditorTabContainer setFrame: bounds];
+		[mEditorSplitView setPosition: fullHeight ofDividerAtIndex: 0];
+		return;
+	}
+
+	[mSearchResultContainer setHidden: NO];
+	CGFloat panelHeight = MIN(260.0, MAX(120.0, floor(fullHeight * 0.30)));
+	[mEditorSplitView setPosition: MAX(90.0, fullHeight - panelHeight) ofDividerAtIndex: 0];
+	[mEditorSplitView adjustSubviews];
+}
+
+- (void) clearSearchResults
+{
+	[mSearchResultEntries removeAllObjects];
+	[mSearchResultsTableView reloadData];
+	[mSearchResultsSummaryLabel setStringValue: @"Search Results"];
+	[self setSearchResultsPanelVisible: NO];
+}
+
+- (void) closeSearchResultsPanel: (id) sender
+{
+	#pragma unused(sender)
+	[self setSearchResultsPanelVisible: NO];
+}
+
+- (void) sortSearchResultEntries
+{
+	NSArray *sortDescriptors = [mSearchResultsTableView sortDescriptors];
+	if ([sortDescriptors count] > 0) {
+		[mSearchResultEntries sortUsingDescriptors: sortDescriptors];
+		return;
+	}
+
+	[mSearchResultEntries sortUsingComparator: ^NSComparisonResult(id lhsObj, id rhsObj) {
+		NSDictionary *lhs = (NSDictionary *)lhsObj;
+		NSDictionary *rhs = (NSDictionary *)rhsObj;
+		NSComparisonResult byFile = [[lhs objectForKey: @"sortFile"] localizedCaseInsensitiveCompare: [rhs objectForKey: @"sortFile"]];
+		if (byFile != NSOrderedSame)
+			return byFile;
+		NSInteger lhsLine = [[lhs objectForKey: @"line"] integerValue];
+		NSInteger rhsLine = [[rhs objectForKey: @"line"] integerValue];
+		if (lhsLine == rhsLine)
+			return NSOrderedSame;
+		return (lhsLine < rhsLine) ? NSOrderedAscending : NSOrderedDescending;
+	}];
+}
+
+- (void) searchResultsActivated: (id) sender
+{
+	#pragma unused(sender)
+	NSInteger row = [mSearchResultsTableView clickedRow];
+	if (row < 0)
+		row = [mSearchResultsTableView selectedRow];
+	if (row < 0 || row >= (NSInteger)[mSearchResultEntries count])
+		return;
+
+	NSDictionary *entry = [mSearchResultEntries objectAtIndex: row];
+	NSString *path = [entry objectForKey: @"path"];
+	NPPDocument *document = nil;
+
+	NSValue *docValue = [entry objectForKey: @"doc"];
+	if ([docValue isKindOfClass: [NSValue class]]) {
+		NPPDocument *candidate = [docValue nonretainedObjectValue];
+		if ([mDocuments containsObject: candidate]) {
+			document = candidate;
+			[self selectDocument: document];
+		}
+	}
+
+	if (document == nil && [path length] > 0) {
+		if (![self openPath: path]) {
+			NSBeep();
+			return;
+		}
+		document = [self currentDocument];
+	}
+
+	if (document == nil)
+		return;
+
+	NSInteger line = [[entry objectForKey: @"line"] integerValue];
+	if (line > 0)
+		[document.editor setGeneralProperty: SCI_GOTOLINE parameter: line - 1 value: 0];
+
+	NSUInteger location = [[entry objectForKey: @"matchLocation"] unsignedIntegerValue];
+	NSUInteger length = MAX((NSUInteger)1, [[entry objectForKey: @"matchLength"] unsignedIntegerValue]);
+	NSString *text = [document.editor string];
+	if (location < [text length]) {
+		NSUInteger maxEnd = MIN([text length], location + length);
+		[self selectRange: NSMakeRange(location, maxEnd - location) inEditor: document.editor];
+	} else {
+		[document.editor setGeneralProperty: SCI_SCROLLCARET parameter: 0 value: 0];
+	}
+}
+
+- (void) collectSearchResultsFromText: (NSString *) text
+						  sourcePath: (NSString *) sourcePath
+						 sourceTitle: (NSString *) sourceTitle
+							   query: (NSString *) query
+							   regex: (BOOL) regex
+						   matchCase: (BOOL) matchCase
+						   wholeWord: (BOOL) wholeWord
+						resultEntries: (NSMutableArray *) resultEntries
+							 maxHits: (NSUInteger) maxHits
+						  stopSearch: (BOOL *) stopSearch
+{
+	if ([text length] == 0 || [query length] == 0)
+		return;
+
+	NSArray *ranges = [self rangesForQuery: query inText: text regex: regex matchCase: matchCase wholeWord: wholeWord];
+	if ([ranges count] == 0)
+		return;
+
+	NSString *fileDisplay = ([sourcePath length] > 0) ? [sourcePath lastPathComponent] : sourceTitle;
+	if ([fileDisplay length] == 0)
+		fileDisplay = @"Untitled";
+
+	__block NSUInteger matchIndex = 0;
+	__block NSUInteger lineNo = 0;
+	[text enumerateSubstringsInRange: NSMakeRange(0, [text length])
+							 options: NSStringEnumerationByLines | NSStringEnumerationSubstringNotRequired
+						  usingBlock: ^(NSString *substring, NSRange substringRange, NSRange enclosingRange, BOOL *stop) {
+							  #pragma unused(substring)
+							  lineNo++;
+
+							  while (matchIndex < [ranges count]) {
+								  NSRange matchRange = [[ranges objectAtIndex: matchIndex] rangeValue];
+								  if (matchRange.location < enclosingRange.location) {
+									  matchIndex++;
+									  continue;
+								  }
+								  if (matchRange.location >= NSMaxRange(enclosingRange))
+									  break;
+
+								  NSString *lineText = [text substringWithRange: substringRange];
+								  if ([lineText length] > 420)
+									  lineText = [[lineText substringToIndex: 420] stringByAppendingString: @"..."];
+
+								  NSMutableDictionary *entry = [NSMutableDictionary dictionaryWithObjectsAndKeys:
+									  fileDisplay, @"file",
+									  [fileDisplay lowercaseString], @"sortFile",
+									  [NSNumber numberWithUnsignedInteger: lineNo], @"line",
+									  lineText, @"snippet",
+									  [NSNumber numberWithUnsignedInteger: matchRange.location], @"matchLocation",
+									  [NSNumber numberWithUnsignedInteger: matchRange.length], @"matchLength",
+									  query, @"query",
+									  (sourcePath != nil) ? sourcePath : @"", @"path",
+									  nil];
+								  [resultEntries addObject: entry];
+
+								  if ([resultEntries count] >= maxHits) {
+									  if (stopSearch != nil)
+										  *stopSearch = YES;
+									  *stop = YES;
+									  return;
+								  }
+
+								  matchIndex++;
+							  }
+
+							  if (matchIndex >= [ranges count])
+								  *stop = YES;
+						  }];
+}
+
 - (void) saveSessionState
 {
 	NSMutableArray *documents = [NSMutableArray array];
@@ -2403,64 +2688,92 @@ willBeInsertedIntoToolbar: (BOOL) flag
 	BOOL matchCase = ([mSearchMatchCase state] == NSOnState);
 	BOOL wholeWord = ([mSearchWholeWord state] == NSOnState);
 	NSInteger scope = [mSearchScopePopup indexOfSelectedItem];
-
-	NSMutableString *results = [NSMutableString stringWithFormat: @"Search Results\nQuery: %@\nMode: %@\n\n", query, regex ? @"Regex" : @"Normal"];
+	NSMutableArray *entries = [NSMutableArray array];
+	BOOL stopSearch = NO;
+	NSUInteger maxHits = 12000;
+	NSUInteger scannedFiles = 0;
 
 	if (scope == 0 || scope == 1) {
 		NSArray *docs = (scope == 0 && [self currentDocument] != nil)
 			? [NSArray arrayWithObject: [self currentDocument]]
 			: [NSArray arrayWithArray: mDocuments];
+
 		for (NPPDocument *doc in docs) {
 			NSString *text = [doc.editor string];
-			NSArray *ranges = [self rangesForQuery: query inText: text regex: regex matchCase: matchCase wholeWord: wholeWord];
-			if ([ranges count] == 0)
+			if ([text length] == 0)
 				continue;
 
-			NSString *name = (doc.filePath != nil) ? doc.filePath : [self titleForDocument: doc];
-			[results appendFormat: @"\n%@\n", name];
-
-			__block NSUInteger lineNo = 0;
-			[text enumerateLinesUsingBlock: ^(NSString *line, BOOL *stop) {
-				lineNo++;
-				NSArray *lineMatches = [self rangesForQuery: query inText: line regex: regex matchCase: matchCase wholeWord: wholeWord];
-				if ([lineMatches count] > 0)
-					[results appendFormat: @"  %lu: %@\n", (unsigned long)lineNo, line];
-				if ([results length] > 500000)
-					*stop = YES;
-			}];
+			NSUInteger beforeCount = [entries count];
+			[self collectSearchResultsFromText: text
+								  sourcePath: doc.filePath
+								 sourceTitle: [self titleForDocument: doc]
+									   query: query
+									   regex: regex
+								   matchCase: matchCase
+								   wholeWord: wholeWord
+								resultEntries: entries
+									 maxHits: maxHits
+								  stopSearch: &stopSearch];
+			for (NSUInteger i = beforeCount; i < [entries count]; ++i) {
+				NSMutableDictionary *entry = [entries objectAtIndex: i];
+				[entry setObject: [NSValue valueWithNonretainedObject: doc] forKey: @"doc"];
+			}
+			if (stopSearch)
+				break;
 		}
 	} else {
 		NSArray *files = [self filesForSearchScope: scope];
 		for (NSString *path in files) {
+			scannedFiles++;
 			NSStringEncoding encoding = NSUTF8StringEncoding;
 			NSString *text = nil;
 			if (![self readTextFileAtPath: path content: &text usedEncoding: &encoding error: nil] || text == nil)
 				continue;
-			if (text == nil)
-				continue;
 
-			NSArray *ranges = [self rangesForQuery: query inText: text regex: regex matchCase: matchCase wholeWord: wholeWord];
-			if ([ranges count] == 0)
-				continue;
-
-			[results appendFormat: @"\n%@\n", path];
-			__block NSUInteger lineNo = 0;
-			[text enumerateLinesUsingBlock: ^(NSString *line, BOOL *stop) {
-				lineNo++;
-				NSArray *lineMatches = [self rangesForQuery: query inText: line regex: regex matchCase: matchCase wholeWord: wholeWord];
-				if ([lineMatches count] > 0)
-					[results appendFormat: @"  %lu: %@\n", (unsigned long)lineNo, line];
-				if ([results length] > 500000)
-					*stop = YES;
-			}];
+			[self collectSearchResultsFromText: text
+								  sourcePath: path
+								 sourceTitle: [path lastPathComponent]
+									   query: query
+									   regex: regex
+								   matchCase: matchCase
+								   wholeWord: wholeWord
+								resultEntries: entries
+									 maxHits: maxHits
+								  stopSearch: &stopSearch];
+			if (stopSearch)
+				break;
 		}
 	}
 
-	NPPDocument *resultDocument = [self createDocumentWithText: results path: nil encoding: NSUTF8StringEncoding];
-	[resultDocument.editor setGeneralProperty: SCI_SETSAVEPOINT parameter: 0 value: 0];
-	resultDocument.dirty = NO;
-	resultDocument.metadataDirty = NO;
-	[self updateDocumentTabs];
+	[mSearchResultEntries removeAllObjects];
+	[mSearchResultEntries addObjectsFromArray: entries];
+	[self sortSearchResultEntries];
+	[mSearchResultsTableView reloadData];
+
+	NSString *scopeLabel = @"Current Document";
+	if (scope == 1)
+		scopeLabel = @"All Open Documents";
+	else if (scope == 2)
+		scopeLabel = @"Project Files";
+	else if (scope == 3)
+		scopeLabel = @"Folder";
+
+	NSString *summary = [NSString stringWithFormat: @"%lu result(s) for \"%@\"  •  %@",
+						   (unsigned long)[mSearchResultEntries count],
+						   query,
+						   scopeLabel];
+	if (scope >= 2)
+		summary = [summary stringByAppendingFormat: @"  •  scanned %lu file(s)", (unsigned long)scannedFiles];
+	if (stopSearch)
+		summary = [summary stringByAppendingString: @"  •  limit reached"];
+	[mSearchResultsSummaryLabel setStringValue: summary];
+	[self setSearchResultsPanelVisible: YES];
+
+	[mLastSearch release];
+	mLastSearch = [query copy];
+
+	if ([mSearchResultEntries count] > 0)
+		[mSearchResultsTableView selectRowIndexes: [NSIndexSet indexSetWithIndex: 0] byExtendingSelection: NO];
 }
 
 - (void) searchPanelReplace: (id) sender
@@ -4647,6 +4960,8 @@ willBeInsertedIntoToolbar: (BOOL) flag
 		return [mFunctionEntries count];
 	if (tableView == mProjectTableView)
 		return [mProjectEntries count];
+	if (tableView == mSearchResultsTableView)
+		return [mSearchResultEntries count];
 	return 0;
 }
 
@@ -4668,7 +4983,28 @@ willBeInsertedIntoToolbar: (BOOL) flag
 		return [[mProjectEntries objectAtIndex: row] objectForKey: @"display"];
 	}
 
+	if (tableView == mSearchResultsTableView) {
+		if (row < 0 || row >= (NSInteger)[mSearchResultEntries count])
+			return @"";
+		NSDictionary *entry = [mSearchResultEntries objectAtIndex: row];
+		NSString *identifier = [tableColumn identifier];
+		if ([identifier isEqualToString: @"resultFile"])
+			return [entry objectForKey: @"file"];
+		if ([identifier isEqualToString: @"resultLine"])
+			return [entry objectForKey: @"line"];
+		return [entry objectForKey: @"snippet"];
+	}
+
 	return @"";
+}
+
+- (void) tableView: (NSTableView *) tableView sortDescriptorsDidChange: (NSArray *) oldDescriptors
+{
+	#pragma unused(oldDescriptors)
+	if (tableView != mSearchResultsTableView)
+		return;
+	[self sortSearchResultEntries];
+	[mSearchResultsTableView reloadData];
 }
 
 //--------------------------------------------------------------------------------------------------
