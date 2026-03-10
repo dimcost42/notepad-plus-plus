@@ -73,12 +73,22 @@ static NSInteger const kMenuTagWordWrap = 9101;
 static NSInteger const kMenuTagShowWhitespace = 9102;
 static NSInteger const kMenuTagShowEol = 9103;
 static NSInteger const kMenuTagShowLineNumbers = 9104;
+static NSInteger const kMenuTagLiveTail = 9105;
+static NSInteger const kMenuTagSplitScreen = 9106;
+static NSInteger const kMenuTagDocumentMap = 9107;
 static NSInteger const kMenuTagEolWindows = 9201;
 static NSInteger const kMenuTagEolUnix = 9202;
 static NSInteger const kMenuTagEolMac = 9203;
 static NSInteger const kMenuTagEncodingUtf8 = 9301;
 static NSInteger const kMenuTagEncodingUtf16LE = 9302;
 static NSInteger const kMenuTagEncodingUtf16BE = 9303;
+static NSInteger const kMenuTagEncodingIso88591 = 9304;
+static NSInteger const kMenuTagEncodingWindows1252 = 9305;
+static NSInteger const kMenuTagEncodingWindows1251 = 9306;
+static NSInteger const kMenuTagEncodingShiftJis = 9307;
+static NSInteger const kMenuTagEncodingGb18030 = 9308;
+static NSInteger const kMenuTagEncodingBig5 = 9309;
+static NSInteger const kMenuTagEncodingEucKr = 9310;
 static NSInteger const kMenuTagMacroRecord = 9401;
 static NSInteger const kMenuTagMacroPlay = 9402;
 static NSInteger const kMenuTagMacroSaveRecorded = 9403;
@@ -86,6 +96,9 @@ static NSInteger const kMenuTagMacroRepeat = 9404;
 static NSInteger const kMenuTagMacroSeparator = 9405;
 static NSInteger const kMenuTagMacroPlaceholder = 9406;
 static NSInteger const kMenuTagMacroDynamicBase = 9500;
+static NSInteger const kMenuTagAutosave = 9601;
+
+static NSTimeInterval const kNppMacAutosaveIntervalSeconds = 5.0;
 
 typedef void (*NppMacPluginInitFn)(void *context);
 typedef void (*NppMacPluginDeinitFn)(void *context);
@@ -96,6 +109,36 @@ typedef int (*NppMacPluginCommandCountFn)(void);
 typedef const char *(*NppMacPluginCommandNameFn)(int index);
 typedef const char *(*NppMacPluginCommandIdFn)(int index);
 typedef void (*NppMacPluginRunCommandFn)(int index, void *context);
+
+static NSStringEncoding nppEncodingWindows1252()
+{
+	return CFStringConvertEncodingToNSStringEncoding(kCFStringEncodingWindowsLatin1);
+}
+
+static NSStringEncoding nppEncodingWindows1251()
+{
+	return CFStringConvertEncodingToNSStringEncoding(kCFStringEncodingWindowsCyrillic);
+}
+
+static NSStringEncoding nppEncodingShiftJis()
+{
+	return CFStringConvertEncodingToNSStringEncoding(kCFStringEncodingShiftJIS);
+}
+
+static NSStringEncoding nppEncodingGb18030()
+{
+	return CFStringConvertEncodingToNSStringEncoding(kCFStringEncodingGB_18030_2000);
+}
+
+static NSStringEncoding nppEncodingBig5()
+{
+	return CFStringConvertEncodingToNSStringEncoding(kCFStringEncodingBig5);
+}
+
+static NSStringEncoding nppEncodingEucKr()
+{
+	return CFStringConvertEncodingToNSStringEncoding(kCFStringEncodingEUC_KR);
+}
 
 @interface AppController ()
 - (void) configureTabHost;
@@ -109,6 +152,13 @@ typedef void (*NppMacPluginRunCommandFn)(int index, void *context);
 - (void) refreshEditorState: (NSTimer *) timer;
 - (void) refreshUiToggles;
 - (void) applyDisplayFlagsToEditor: (ScintillaView *) editor;
+- (void) ensureExtraEditorForCurrentDocument;
+- (void) removeExtraEditor;
+- (void) layoutActiveEditorViews;
+- (void) refreshExtraEditorState;
+- (void) clearComparisonMarkers;
+- (void) applyComparisonMarkersBetweenEditor: (ScintillaView *) left rightEditor: (ScintillaView *) right;
+- (void) runAutosaveIfNeeded;
 
 - (void) saveSessionState;
 - (BOOL) restoreSessionState;
@@ -144,6 +194,7 @@ typedef void (*NppMacPluginRunCommandFn)(int index, void *context);
 - (void) applyEncoding: (NSStringEncoding) encoding toCurrentDocumentWithName: (NSString *) encodingName;
 - (void) convertEolToMode: (NSInteger) eolMode;
 - (void) ensureSearchPanel;
+- (void) updateSearchScopeUiState;
 - (NSInteger) currentSearchFlagsFromPanel;
 - (void) searchPanelFindNext: (id) sender;
 - (void) searchPanelFindAll: (id) sender;
@@ -153,6 +204,10 @@ typedef void (*NppMacPluginRunCommandFn)(int index, void *context);
 - (NSArray *) rangesForQuery: (NSString *) query inText: (NSString *) text regex: (BOOL) regex matchCase: (BOOL) matchCase wholeWord: (BOOL) wholeWord;
 - (BOOL) isWordBoundaryAtIndex: (NSUInteger) index inText: (NSString *) text;
 - (void) selectRange: (NSRange) range inEditor: (ScintillaView *) editor;
+- (NSArray *) searchFilterTokensFromString: (NSString *) filter;
+- (BOOL) filePath: (NSString *) path matchesFilterTokens: (NSArray *) tokens;
+- (NSArray *) filesInFolder: (NSString *) folderPath matchingFilter: (NSString *) filter;
+- (NSArray *) filesForSearchScope: (NSInteger) scope;
 
 - (void) ensurePreferencesWindow;
 - (void) applyPreferences;
@@ -171,6 +226,19 @@ typedef void (*NppMacPluginRunCommandFn)(int index, void *context);
 - (NSString *) promptForStringWithTitle: (NSString *) title
 									message: (NSString *) message
 								defaultValue: (NSString *) defaultValue;
+- (BOOL) readTextFileAtPath: (NSString *) path
+					content: (NSString **) outContent
+				usedEncoding: (NSStringEncoding *) outEncoding
+					   error: (NSError **) outError;
+- (NSStringEncoding) detectEncodingForData: (NSData *) data fallbackEncoding: (NSStringEncoding) fallbackEncoding;
+- (BOOL) isLikelyUtf8Data: (NSData *) data;
+- (double) printableRatioForString: (NSString *) text;
+- (void) toggleLiveTailEnabled: (BOOL) enabled;
+- (void) resetLiveTailTrackingForCurrentDocument;
+- (void) refreshLiveTail;
+- (NSRange) currentSelectionRangeInEditor: (ScintillaView *) editor;
+- (void) replaceSelectedOrWholeTextInCurrentDocumentUsingBlock: (NSString *(^)(NSString *input, NSRange range, BOOL *didChange)) transform;
+- (NSString *) camelCaseFromString: (NSString *) source;
 @end
 
 @implementation AppController
@@ -180,7 +248,9 @@ typedef void (*NppMacPluginRunCommandFn)(int index, void *context);
 	for (NSDictionary *plugin in mPluginDescriptors) {
 		NSValue *deinitValue = [plugin objectForKey: @"deinit"];
 		NSValue *handleValue = [plugin objectForKey: @"handle"];
-		NppMacPluginDeinitFn deinitFn = (NppMacPluginDeinitFn)[deinitValue pointerValue];
+		NppMacPluginDeinitFn deinitFn = NULL;
+		if ([deinitValue isKindOfClass: [NSValue class]])
+			[deinitValue getValue: &deinitFn];
 		void *handle = [handleValue pointerValue];
 		if (deinitFn != NULL)
 			deinitFn(self);
@@ -201,6 +271,9 @@ typedef void (*NppMacPluginRunCommandFn)(int index, void *context);
 	[mSearchPanel release];
 	[mPreferencesWindow release];
 	[mMainToolbar release];
+	[mLiveTailPath release];
+	[mLiveTailLastModificationDate release];
+	[mComparedFilePath release];
 
 	if (mLexillaDL != NULL)
 		dlclose(mLexillaDL);
@@ -232,6 +305,15 @@ typedef void (*NppMacPluginRunCommandFn)(int index, void *context);
 	mShowWhitespace = NO;
 	mShowEol = NO;
 	mShowLineNumbers = prefDefaultLineNumbers;
+	mLiveTailEnabled = NO;
+	mLiveTailPath = nil;
+	mLiveTailKnownLength = 0;
+	mLiveTailLastModificationDate = nil;
+	mSplitViewEnabled = NO;
+	mDocumentMapVisible = NO;
+	mAutosaveEnabled = YES;
+	mNextAutosaveTime = [NSDate timeIntervalSinceReferenceDate] + kNppMacAutosaveIntervalSeconds;
+	mComparedFilePath = nil;
 	mSidebarVisible = [defaults objectForKey: kNppMacPrefShowSidebarKey] ? [defaults boolForKey: kNppMacPrefShowSidebarKey] : YES;
 	mStatusBarVisible = [defaults objectForKey: kNppMacPrefShowStatusBarKey] ? [defaults boolForKey: kNppMacPrefShowStatusBarKey] : YES;
 
@@ -644,6 +726,44 @@ willBeInsertedIntoToolbar: (BOOL) flag
 			[toggleSidebarItem setKeyEquivalentModifierMask: NSCommandKeyMask];
 			[toggleSidebarItem setTarget: self];
 			[viewMenu addItem: toggleSidebarItem];
+
+			NSMenuItem *liveTailItem = [[[NSMenuItem alloc] initWithTitle: @"Tail Current File (Live Reload)"
+															 action: @selector(toggleLiveTailCurrentFile:)
+													  keyEquivalent: @"t"] autorelease];
+			[liveTailItem setKeyEquivalentModifierMask: NSCommandKeyMask | NSAlternateKeyMask];
+			[liveTailItem setTarget: self];
+			[liveTailItem setTag: kMenuTagLiveTail];
+			[viewMenu addItem: liveTailItem];
+		}
+
+		if ([viewMenu itemWithTag: kMenuTagLiveTail] == nil) {
+			NSMenuItem *liveTailItem = [[[NSMenuItem alloc] initWithTitle: @"Tail Current File (Live Reload)"
+															 action: @selector(toggleLiveTailCurrentFile:)
+													  keyEquivalent: @"t"] autorelease];
+			[liveTailItem setKeyEquivalentModifierMask: NSCommandKeyMask | NSAlternateKeyMask];
+			[liveTailItem setTarget: self];
+			[liveTailItem setTag: kMenuTagLiveTail];
+			[viewMenu addItem: liveTailItem];
+		}
+
+		if ([viewMenu itemWithTag: kMenuTagSplitScreen] == nil) {
+			NSMenuItem *splitItem = [[[NSMenuItem alloc] initWithTitle: @"Split Screen Editing"
+															 action: @selector(toggleSplitScreen:)
+													  keyEquivalent: @"2"] autorelease];
+			[splitItem setKeyEquivalentModifierMask: NSCommandKeyMask | NSAlternateKeyMask];
+			[splitItem setTarget: self];
+			[splitItem setTag: kMenuTagSplitScreen];
+			[viewMenu addItem: splitItem];
+		}
+
+		if ([viewMenu itemWithTag: kMenuTagDocumentMap] == nil) {
+			NSMenuItem *documentMapItem = [[[NSMenuItem alloc] initWithTitle: @"Document Map"
+																	action: @selector(toggleDocumentMap:)
+															 keyEquivalent: @"3"] autorelease];
+			[documentMapItem setKeyEquivalentModifierMask: NSCommandKeyMask | NSAlternateKeyMask];
+			[documentMapItem setTarget: self];
+			[documentMapItem setTag: kMenuTagDocumentMap];
+			[viewMenu addItem: documentMapItem];
 		}
 	}
 
@@ -718,6 +838,186 @@ willBeInsertedIntoToolbar: (BOOL) flag
 		[utf16be setTarget: self];
 		[utf16be setTag: kMenuTagEncodingUtf16BE];
 		[encodingMenu addItem: utf16be];
+
+		[encodingMenu addItem: [NSMenuItem separatorItem]];
+
+		NSMenuItem *iso88591 = [[[NSMenuItem alloc] initWithTitle: @"Convert to ISO-8859-1"
+														 action: @selector(setEncodingIso88591:)
+												  keyEquivalent: @""] autorelease];
+		[iso88591 setTarget: self];
+		[iso88591 setTag: kMenuTagEncodingIso88591];
+		[encodingMenu addItem: iso88591];
+
+		NSMenuItem *windows1252 = [[[NSMenuItem alloc] initWithTitle: @"Convert to Windows-1252"
+															action: @selector(setEncodingWindows1252:)
+													 keyEquivalent: @""] autorelease];
+		[windows1252 setTarget: self];
+		[windows1252 setTag: kMenuTagEncodingWindows1252];
+		[encodingMenu addItem: windows1252];
+
+		NSMenuItem *windows1251 = [[[NSMenuItem alloc] initWithTitle: @"Convert to Windows-1251"
+															action: @selector(setEncodingWindows1251:)
+													 keyEquivalent: @""] autorelease];
+		[windows1251 setTarget: self];
+		[windows1251 setTag: kMenuTagEncodingWindows1251];
+		[encodingMenu addItem: windows1251];
+
+		NSMenuItem *shiftJis = [[[NSMenuItem alloc] initWithTitle: @"Convert to Shift_JIS"
+														 action: @selector(setEncodingShiftJis:)
+												  keyEquivalent: @""] autorelease];
+		[shiftJis setTarget: self];
+		[shiftJis setTag: kMenuTagEncodingShiftJis];
+		[encodingMenu addItem: shiftJis];
+
+		NSMenuItem *gb18030 = [[[NSMenuItem alloc] initWithTitle: @"Convert to GB18030"
+														action: @selector(setEncodingGb18030:)
+												 keyEquivalent: @""] autorelease];
+		[gb18030 setTarget: self];
+		[gb18030 setTag: kMenuTagEncodingGb18030];
+		[encodingMenu addItem: gb18030];
+
+		NSMenuItem *big5 = [[[NSMenuItem alloc] initWithTitle: @"Convert to Big5"
+													 action: @selector(setEncodingBig5:)
+											  keyEquivalent: @""] autorelease];
+		[big5 setTarget: self];
+		[big5 setTag: kMenuTagEncodingBig5];
+		[encodingMenu addItem: big5];
+
+		NSMenuItem *eucKr = [[[NSMenuItem alloc] initWithTitle: @"Convert to EUC-KR"
+													  action: @selector(setEncodingEucKr:)
+											   keyEquivalent: @""] autorelease];
+		[eucKr setTarget: self];
+		[eucKr setTag: kMenuTagEncodingEucKr];
+		[encodingMenu addItem: eucKr];
+	}
+
+	if ([encodingMenu itemWithTag: kMenuTagEncodingIso88591] == nil) {
+		[encodingMenu addItem: [NSMenuItem separatorItem]];
+
+		NSMenuItem *iso88591 = [[[NSMenuItem alloc] initWithTitle: @"Convert to ISO-8859-1"
+														 action: @selector(setEncodingIso88591:)
+												  keyEquivalent: @""] autorelease];
+		[iso88591 setTarget: self];
+		[iso88591 setTag: kMenuTagEncodingIso88591];
+		[encodingMenu addItem: iso88591];
+
+		NSMenuItem *windows1252 = [[[NSMenuItem alloc] initWithTitle: @"Convert to Windows-1252"
+															action: @selector(setEncodingWindows1252:)
+													 keyEquivalent: @""] autorelease];
+		[windows1252 setTarget: self];
+		[windows1252 setTag: kMenuTagEncodingWindows1252];
+		[encodingMenu addItem: windows1252];
+
+		NSMenuItem *windows1251 = [[[NSMenuItem alloc] initWithTitle: @"Convert to Windows-1251"
+															action: @selector(setEncodingWindows1251:)
+													 keyEquivalent: @""] autorelease];
+		[windows1251 setTarget: self];
+		[windows1251 setTag: kMenuTagEncodingWindows1251];
+		[encodingMenu addItem: windows1251];
+
+		NSMenuItem *shiftJis = [[[NSMenuItem alloc] initWithTitle: @"Convert to Shift_JIS"
+														 action: @selector(setEncodingShiftJis:)
+												  keyEquivalent: @""] autorelease];
+		[shiftJis setTarget: self];
+		[shiftJis setTag: kMenuTagEncodingShiftJis];
+		[encodingMenu addItem: shiftJis];
+
+		NSMenuItem *gb18030 = [[[NSMenuItem alloc] initWithTitle: @"Convert to GB18030"
+														action: @selector(setEncodingGb18030:)
+												 keyEquivalent: @""] autorelease];
+		[gb18030 setTarget: self];
+		[gb18030 setTag: kMenuTagEncodingGb18030];
+		[encodingMenu addItem: gb18030];
+
+		NSMenuItem *big5 = [[[NSMenuItem alloc] initWithTitle: @"Convert to Big5"
+													 action: @selector(setEncodingBig5:)
+											  keyEquivalent: @""] autorelease];
+		[big5 setTarget: self];
+		[big5 setTag: kMenuTagEncodingBig5];
+		[encodingMenu addItem: big5];
+
+		NSMenuItem *eucKr = [[[NSMenuItem alloc] initWithTitle: @"Convert to EUC-KR"
+													  action: @selector(setEncodingEucKr:)
+											   keyEquivalent: @""] autorelease];
+		[eucKr setTarget: self];
+		[eucKr setTag: kMenuTagEncodingEucKr];
+		[encodingMenu addItem: eucKr];
+	}
+
+	NSMenuItem *toolsMenuItem = [mainMenu itemWithTitle: @"Tools"];
+	NSMenu *toolsMenu = nil;
+	if (toolsMenuItem == nil) {
+		toolsMenuItem = [[[NSMenuItem alloc] initWithTitle: @"Tools" action: nil keyEquivalent: @""] autorelease];
+		toolsMenu = [[[NSMenu alloc] initWithTitle: @"Tools"] autorelease];
+		[toolsMenuItem setSubmenu: toolsMenu];
+		NSUInteger insertIndex = [mainMenu indexOfItemWithTitle: @"Encoding"];
+		if (insertIndex == NSNotFound)
+			insertIndex = [mainMenu numberOfItems];
+		else
+			insertIndex += 1;
+		[mainMenu insertItem: toolsMenuItem atIndex: insertIndex];
+	} else {
+		toolsMenu = [toolsMenuItem submenu];
+	}
+
+	if (toolsMenu != nil && [toolsMenu itemWithTag: kMenuTagAutosave] == nil) {
+		NSMenuItem *compareItem = [[[NSMenuItem alloc] initWithTitle: @"Compare Current File With..."
+															 action: @selector(compareCurrentWithFile:)
+													  keyEquivalent: @""] autorelease];
+		[compareItem setTarget: self];
+		[toolsMenu addItem: compareItem];
+
+		NSMenuItem *autosaveItem = [[[NSMenuItem alloc] initWithTitle: @"Autosave"
+															 action: @selector(toggleAutosave:)
+													  keyEquivalent: @""] autorelease];
+		[autosaveItem setTarget: self];
+		[autosaveItem setTag: kMenuTagAutosave];
+		[toolsMenu addItem: autosaveItem];
+
+		[toolsMenu addItem: [NSMenuItem separatorItem]];
+
+		NSMenuItem *lineOps = [[[NSMenuItem alloc] initWithTitle: @"Line Operations" action: nil keyEquivalent: @""] autorelease];
+		NSMenu *lineOpsMenu = [[[NSMenu alloc] initWithTitle: @"Line Operations"] autorelease];
+		[lineOps setSubmenu: lineOpsMenu];
+		[toolsMenu addItem: lineOps];
+
+		NSMenuItem *sortAsc = [[[NSMenuItem alloc] initWithTitle: @"Sort Lines Ascending"
+														  action: @selector(sortSelectedLinesAscending:)
+												   keyEquivalent: @""] autorelease];
+		[sortAsc setTarget: self];
+		[lineOpsMenu addItem: sortAsc];
+
+		NSMenuItem *sortDesc = [[[NSMenuItem alloc] initWithTitle: @"Sort Lines Descending"
+														   action: @selector(sortSelectedLinesDescending:)
+													keyEquivalent: @""] autorelease];
+		[sortDesc setTarget: self];
+		[lineOpsMenu addItem: sortDesc];
+
+		NSMenuItem *trimSpaces = [[[NSMenuItem alloc] initWithTitle: @"Trim Trailing Whitespace"
+															 action: @selector(trimTrailingWhitespaceLines:)
+													  keyEquivalent: @""] autorelease];
+		[trimSpaces setTarget: self];
+		[lineOpsMenu addItem: trimSpaces];
+
+		[lineOpsMenu addItem: [NSMenuItem separatorItem]];
+
+		NSMenuItem *upperCase = [[[NSMenuItem alloc] initWithTitle: @"Selection to UPPERCASE"
+															 action: @selector(convertSelectionToUpperCase:)
+													  keyEquivalent: @""] autorelease];
+		[upperCase setTarget: self];
+		[lineOpsMenu addItem: upperCase];
+
+		NSMenuItem *lowerCase = [[[NSMenuItem alloc] initWithTitle: @"Selection to lowercase"
+															 action: @selector(convertSelectionToLowerCase:)
+													  keyEquivalent: @""] autorelease];
+		[lowerCase setTarget: self];
+		[lineOpsMenu addItem: lowerCase];
+
+		NSMenuItem *camelCase = [[[NSMenuItem alloc] initWithTitle: @"Selection to camelCase"
+															 action: @selector(convertSelectionToCamelCase:)
+													  keyEquivalent: @""] autorelease];
+		[camelCase setTarget: self];
+		[lineOpsMenu addItem: camelCase];
 	}
 
 	NSMenuItem *macroMenuItem = [mainMenu itemWithTitle: @"Macro"];
@@ -886,6 +1186,12 @@ willBeInsertedIntoToolbar: (BOOL) flag
 	[self refreshUiToggles];
 	[self refreshFunctionList];
 	[self refreshProjectEntries];
+	if (mLiveTailEnabled)
+		[self resetLiveTailTrackingForCurrentDocument];
+	if (mSplitViewEnabled || mDocumentMapVisible)
+		[self ensureExtraEditorForCurrentDocument];
+	else
+		[self removeExtraEditor];
 }
 
 - (NSString *) titleForDocument: (NPPDocument *) document
@@ -976,6 +1282,9 @@ willBeInsertedIntoToolbar: (BOOL) flag
 			document.dirty = isDirty;
 	}
 
+	[self runAutosaveIfNeeded];
+	[self refreshLiveTail];
+	[self refreshExtraEditorState];
 	[self updateDocumentTabs];
 	[self updateWindowTitle];
 	[self refreshUiToggles];
@@ -992,6 +1301,10 @@ willBeInsertedIntoToolbar: (BOOL) flag
 	NSMenuItem *wsItem = [mainMenu itemWithTag: kMenuTagShowWhitespace];
 	NSMenuItem *eolItem = [mainMenu itemWithTag: kMenuTagShowEol];
 	NSMenuItem *marginItem = [mainMenu itemWithTag: kMenuTagShowLineNumbers];
+	NSMenuItem *tailItem = [mainMenu itemWithTag: kMenuTagLiveTail];
+	NSMenuItem *splitItem = [mainMenu itemWithTag: kMenuTagSplitScreen];
+	NSMenuItem *documentMapItem = [mainMenu itemWithTag: kMenuTagDocumentMap];
+	NSMenuItem *autosaveItem = [mainMenu itemWithTag: kMenuTagAutosave];
 	NSMenuItem *viewMenuItem = [mainMenu itemWithTitle: @"View"];
 	NSMenuItem *sidebarItem = [[viewMenuItem submenu] itemWithTitle: @"Toggle Sidebar"];
 
@@ -1000,6 +1313,10 @@ willBeInsertedIntoToolbar: (BOOL) flag
 	[eolItem setState: mShowEol ? NSOnState : NSOffState];
 	[marginItem setState: mShowLineNumbers ? NSOnState : NSOffState];
 	[sidebarItem setState: mSidebarVisible ? NSOnState : NSOffState];
+	[tailItem setState: mLiveTailEnabled ? NSOnState : NSOffState];
+	[splitItem setState: mSplitViewEnabled ? NSOnState : NSOffState];
+	[documentMapItem setState: mDocumentMapVisible ? NSOnState : NSOffState];
+	[autosaveItem setState: mAutosaveEnabled ? NSOnState : NSOffState];
 
 	NPPDocument *document = [self currentDocument];
 	if (document == nil)
@@ -1014,6 +1331,13 @@ willBeInsertedIntoToolbar: (BOOL) flag
 	[[mainMenu itemWithTag: kMenuTagEncodingUtf8] setState: (encoding == NSUTF8StringEncoding) ? NSOnState : NSOffState];
 	[[mainMenu itemWithTag: kMenuTagEncodingUtf16LE] setState: (encoding == NSUTF16LittleEndianStringEncoding) ? NSOnState : NSOffState];
 	[[mainMenu itemWithTag: kMenuTagEncodingUtf16BE] setState: (encoding == NSUTF16BigEndianStringEncoding) ? NSOnState : NSOffState];
+	[[mainMenu itemWithTag: kMenuTagEncodingIso88591] setState: (encoding == NSISOLatin1StringEncoding) ? NSOnState : NSOffState];
+	[[mainMenu itemWithTag: kMenuTagEncodingWindows1252] setState: (encoding == nppEncodingWindows1252()) ? NSOnState : NSOffState];
+	[[mainMenu itemWithTag: kMenuTagEncodingWindows1251] setState: (encoding == nppEncodingWindows1251()) ? NSOnState : NSOffState];
+	[[mainMenu itemWithTag: kMenuTagEncodingShiftJis] setState: (encoding == nppEncodingShiftJis()) ? NSOnState : NSOffState];
+	[[mainMenu itemWithTag: kMenuTagEncodingGb18030] setState: (encoding == nppEncodingGb18030()) ? NSOnState : NSOffState];
+	[[mainMenu itemWithTag: kMenuTagEncodingBig5] setState: (encoding == nppEncodingBig5()) ? NSOnState : NSOffState];
+	[[mainMenu itemWithTag: kMenuTagEncodingEucKr] setState: (encoding == nppEncodingEucKr()) ? NSOnState : NSOffState];
 }
 
 - (void) applyDisplayFlagsToEditor: (ScintillaView *) editor
@@ -1025,6 +1349,233 @@ willBeInsertedIntoToolbar: (BOOL) flag
 	[editor setGeneralProperty: SCI_SETVIEWWS parameter: mShowWhitespace ? SCWS_VISIBLEALWAYS : SCWS_INVISIBLE value: 0];
 	[editor setGeneralProperty: SCI_SETVIEWEOL parameter: mShowEol ? 1 : 0 value: 0];
 	[editor setGeneralProperty: SCI_SETMARGINWIDTHN parameter: 0 value: mShowLineNumbers ? 48 : 0];
+}
+
+- (void) ensureExtraEditorForCurrentDocument
+{
+	if (!(mSplitViewEnabled || mDocumentMapVisible)) {
+		[self removeExtraEditor];
+		return;
+	}
+
+	NPPDocument *document = [self currentDocument];
+	if (document == nil || document.editor == nil)
+		return;
+
+	NSView *container = [document.tabItem view];
+	if (container == nil)
+		return;
+
+	if (sciExtra != nil && [sciExtra superview] != container) {
+		[sciExtra removeFromSuperview];
+		sciExtra = nil;
+	}
+
+	if (sciExtra == nil) {
+		sciExtra = [[[ScintillaView alloc] initWithFrame: [container bounds]] autorelease];
+		[sciExtra setDelegate: self];
+		[self setupEditor: sciExtra];
+		[self applyDisplayFlagsToEditor: sciExtra];
+		[container addSubview: sciExtra];
+	}
+
+	[self layoutActiveEditorViews];
+}
+
+- (void) removeExtraEditor
+{
+	if (sciExtra != nil) {
+		[sciExtra removeFromSuperview];
+		sciExtra = nil;
+	}
+
+	[self clearComparisonMarkers];
+
+	NPPDocument *document = [self currentDocument];
+	if (document != nil && document.editor != nil) {
+		NSView *container = [document.tabItem view];
+		if (container != nil)
+			[document.editor setFrame: [container bounds]];
+	}
+}
+
+- (void) layoutActiveEditorViews
+{
+	NPPDocument *document = [self currentDocument];
+	if (document == nil || document.editor == nil)
+		return;
+
+	NSView *container = [document.tabItem view];
+	if (container == nil)
+		return;
+
+	NSRect bounds = [container bounds];
+	if (sciExtra == nil || !(mSplitViewEnabled || mDocumentMapVisible)) {
+		[document.editor setFrame: bounds];
+		return;
+	}
+
+	if (mDocumentMapVisible) {
+		CGFloat mapWidth = MIN(260.0, MAX(160.0, floor(bounds.size.width * 0.24)));
+		CGFloat separator = 2.0;
+		CGFloat mainWidth = MAX(120.0, bounds.size.width - mapWidth - separator);
+		[document.editor setFrame: NSMakeRect(0, 0, mainWidth, bounds.size.height)];
+		[sciExtra setFrame: NSMakeRect(mainWidth + separator, 0, bounds.size.width - (mainWidth + separator), bounds.size.height)];
+		return;
+	}
+
+	CGFloat separator = 4.0;
+	CGFloat leftWidth = floor((bounds.size.width - separator) * 0.5);
+	CGFloat rightWidth = MAX(120.0, bounds.size.width - leftWidth - separator);
+	[document.editor setFrame: NSMakeRect(0, 0, leftWidth, bounds.size.height)];
+	[sciExtra setFrame: NSMakeRect(leftWidth + separator, 0, rightWidth, bounds.size.height)];
+}
+
+- (void) clearComparisonMarkers
+{
+	NSArray *editors = [NSArray arrayWithObjects: mEditor, sciExtra, nil];
+	for (ScintillaView *editor in editors) {
+		if (editor == nil)
+			continue;
+		long length = [editor getGeneralProperty: SCI_GETLENGTH parameter: 0];
+		[editor setGeneralProperty: SCI_SETINDICATORCURRENT parameter: 12 value: 0];
+		[editor setGeneralProperty: SCI_INDICATORCLEARRANGE parameter: 0 value: length];
+	}
+}
+
+- (void) applyComparisonMarkersBetweenEditor: (ScintillaView *) left rightEditor: (ScintillaView *) right
+{
+	if (left == nil || right == nil)
+		return;
+
+	NSString *leftText = [left string];
+	NSString *rightText = [right string];
+	if (leftText == nil || rightText == nil)
+		return;
+
+	[self clearComparisonMarkers];
+
+	NSArray *editors = [NSArray arrayWithObjects: left, right, nil];
+	for (ScintillaView *editor in editors) {
+		[editor setGeneralProperty: SCI_INDICSETSTYLE parameter: 12 value: INDIC_STRAIGHTBOX];
+		[editor setColorProperty: SCI_INDICSETFORE parameter: 12 fromHTML: @"#FF5A3D"];
+		[editor setGeneralProperty: SCI_SETINDICATORCURRENT parameter: 12 value: 0];
+	}
+
+	NSMutableArray *leftLines = [NSMutableArray array];
+	NSMutableArray *leftRanges = [NSMutableArray array];
+	[leftText enumerateSubstringsInRange: NSMakeRange(0, [leftText length])
+								 options: NSStringEnumerationByLines | NSStringEnumerationSubstringNotRequired
+							  usingBlock: ^(NSString *substring, NSRange substringRange, NSRange enclosingRange, BOOL *stop) {
+								  #pragma unused(substring)
+								  #pragma unused(stop)
+								  [leftLines addObject: [leftText substringWithRange: substringRange]];
+								  [leftRanges addObject: [NSValue valueWithRange: enclosingRange]];
+							  }];
+
+	NSMutableArray *rightLines = [NSMutableArray array];
+	NSMutableArray *rightRanges = [NSMutableArray array];
+	[rightText enumerateSubstringsInRange: NSMakeRange(0, [rightText length])
+								  options: NSStringEnumerationByLines | NSStringEnumerationSubstringNotRequired
+							   usingBlock: ^(NSString *substring, NSRange substringRange, NSRange enclosingRange, BOOL *stop) {
+								   #pragma unused(substring)
+								   #pragma unused(stop)
+								   [rightLines addObject: [rightText substringWithRange: substringRange]];
+								   [rightRanges addObject: [NSValue valueWithRange: enclosingRange]];
+							   }];
+
+	NSUInteger count = MAX([leftLines count], [rightLines count]);
+	for (NSUInteger i = 0; i < count; ++i) {
+		NSString *leftLine = (i < [leftLines count]) ? [leftLines objectAtIndex: i] : nil;
+		NSString *rightLine = (i < [rightLines count]) ? [rightLines objectAtIndex: i] : nil;
+
+		BOOL same = (leftLine != nil && rightLine != nil && [leftLine isEqualToString: rightLine]);
+		if (same)
+			continue;
+
+		if (i < [leftRanges count]) {
+			NSRange range = [[leftRanges objectAtIndex: i] rangeValue];
+			[left setGeneralProperty: SCI_INDICATORFILLRANGE parameter: range.location value: range.length];
+		}
+		if (i < [rightRanges count]) {
+			NSRange range = [[rightRanges objectAtIndex: i] rangeValue];
+			[right setGeneralProperty: SCI_INDICATORFILLRANGE parameter: range.location value: range.length];
+		}
+	}
+}
+
+- (void) refreshExtraEditorState
+{
+	if (!(mSplitViewEnabled || mDocumentMapVisible))
+		return;
+
+	NPPDocument *document = [self currentDocument];
+	if (document == nil || document.editor == nil)
+		return;
+
+	[self ensureExtraEditorForCurrentDocument];
+	if (sciExtra == nil)
+		return;
+
+	[self layoutActiveEditorViews];
+
+	BOOL compareMode = ([mComparedFilePath length] > 0);
+	NSString *leftText = [document.editor string];
+	if (!compareMode) {
+		NSString *rightText = [sciExtra string];
+		if (leftText != nil && ![leftText isEqualToString: rightText])
+			[sciExtra setString: leftText];
+		[self clearComparisonMarkers];
+	} else {
+		NSString *otherText = nil;
+		NSStringEncoding ignoredEncoding = NSUTF8StringEncoding;
+		if ([self readTextFileAtPath: mComparedFilePath content: &otherText usedEncoding: &ignoredEncoding error: nil] && otherText != nil) {
+			if (![[sciExtra string] isEqualToString: otherText])
+				[sciExtra setString: otherText];
+			[self applyComparisonMarkersBetweenEditor: document.editor rightEditor: sciExtra];
+		}
+	}
+
+	[sciExtra setGeneralProperty: SCI_SETREADONLY parameter: 1 value: 0];
+	if (mDocumentMapVisible) {
+		[sciExtra setGeneralProperty: SCI_SETZOOM parameter: -7 value: 0];
+		[sciExtra setGeneralProperty: SCI_SETMARGINWIDTHN parameter: 0 value: 0];
+		[sciExtra setGeneralProperty: SCI_SETMARGINWIDTHN parameter: 1 value: 0];
+	} else {
+		[sciExtra setGeneralProperty: SCI_SETZOOM parameter: 0 value: 0];
+		[sciExtra setGeneralProperty: SCI_SETMARGINWIDTHN parameter: 0 value: mShowLineNumbers ? 48 : 0];
+		[sciExtra setGeneralProperty: SCI_SETMARGINWIDTHN parameter: 1 value: 16];
+	}
+
+	long mainTop = [document.editor getGeneralProperty: SCI_GETFIRSTVISIBLELINE parameter: 0];
+	long extraTop = [sciExtra getGeneralProperty: SCI_GETFIRSTVISIBLELINE parameter: 0];
+	long delta = mainTop - extraTop;
+	if (delta != 0)
+		[sciExtra message: SCI_LINESCROLL wParam: 0 lParam: delta];
+}
+
+- (void) runAutosaveIfNeeded
+{
+	if (!mAutosaveEnabled)
+		return;
+
+	NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+	if (now < mNextAutosaveTime)
+		return;
+	mNextAutosaveTime = now + kNppMacAutosaveIntervalSeconds;
+
+	NSUInteger saved = 0;
+	for (NPPDocument *document in mDocuments) {
+		if (document == nil || [document.filePath length] == 0)
+			continue;
+		if (!document.dirty)
+			continue;
+		if ([self saveDocument: document forceSaveAs: NO])
+			saved++;
+	}
+
+	if (saved > 0 && mEditor != nil)
+		[mEditor setStatusText: [NSString stringWithFormat: @"Autosaved %lu file(s)", (unsigned long)saved]];
 }
 
 - (void) saveSessionState
@@ -1140,6 +1691,9 @@ willBeInsertedIntoToolbar: (BOOL) flag
 		lexerMap = [[NSDictionary alloc] initWithObjectsAndKeys:
 			@"cpp", @"c", @"cpp", @"cc", @"cpp", @"cpp", @"cpp", @"cxx", @"cpp", @"h", @"cpp", @"hpp", @"cpp", @"hh", @"cpp", @"hxx", @"cpp", @"m", @"cpp", @"mm",
 			@"python", @"py", @"ruby", @"rb", @"rust", @"rs", @"go", @"go", @"lua", @"lua",
+			@"cpp", @"java", @"cpp", @"kt", @"cpp", @"kts",
+			@"cpp", @"js", @"cpp", @"mjs", @"cpp", @"cjs",
+			@"cpp", @"ts", @"cpp", @"tsx",
 			@"json", @"json", @"yaml", @"yml", @"yaml", @"yaml", @"toml", @"toml",
 			@"cmake", @"cmake", @"sql", @"sql", @"bash", @"sh", @"bash", @"bash", @"bash", @"zsh",
 			@"xml", @"xml", @"xml", @"xsd", @"xml", @"xslt", @"xml", @"plist",
@@ -1191,9 +1745,35 @@ willBeInsertedIntoToolbar: (BOOL) flag
 			return @"UTF-16 LE";
 		case NSUTF16BigEndianStringEncoding:
 			return @"UTF-16 BE";
+		case NSISOLatin1StringEncoding:
+			return @"ISO-8859-1";
 		case NSUTF8StringEncoding:
-		default:
 			return @"UTF-8";
+		default: {
+			NSStringEncoding win1252 = nppEncodingWindows1252();
+			NSStringEncoding win1251 = nppEncodingWindows1251();
+			NSStringEncoding shiftJis = nppEncodingShiftJis();
+			NSStringEncoding gb18030 = nppEncodingGb18030();
+			NSStringEncoding big5 = nppEncodingBig5();
+			NSStringEncoding eucKr = nppEncodingEucKr();
+			if (document.encoding == win1252)
+				return @"Windows-1252";
+			if (document.encoding == win1251)
+				return @"Windows-1251";
+			if (document.encoding == shiftJis)
+				return @"Shift_JIS";
+			if (document.encoding == gb18030)
+				return @"GB18030";
+			if (document.encoding == big5)
+				return @"Big5";
+			if (document.encoding == eucKr)
+				return @"EUC-KR";
+
+			NSString *localized = [NSString localizedNameOfStringEncoding: document.encoding];
+			if ([localized length] > 0)
+				return localized;
+			return @"Unknown Encoding";
+		}
 	}
 }
 
@@ -1260,9 +1840,13 @@ willBeInsertedIntoToolbar: (BOOL) flag
 
 	NSError *readError = nil;
 	NSStringEncoding detectedEncoding = NSUTF8StringEncoding;
-	NSString *content = [NSString stringWithContentsOfFile: normalizedPath
-										usedEncoding: &detectedEncoding
-											   error: &readError];
+	NSString *content = nil;
+	BOOL ok = [self readTextFileAtPath: normalizedPath
+							content: &content
+						usedEncoding: &detectedEncoding
+							   error: &readError];
+	if (!ok)
+		content = nil;
 	if (content == nil) {
 		NSAlert *alert = [[[NSAlert alloc] init] autorelease];
 		[alert setMessageText: @"Cannot open file"];
@@ -1324,6 +1908,8 @@ willBeInsertedIntoToolbar: (BOOL) flag
 	[self updateDocumentTabs];
 	[self updateWindowTitle];
 	[[NSDocumentController sharedDocumentController] noteNewRecentDocumentURL: [NSURL fileURLWithPath: document.filePath]];
+	if (mLiveTailEnabled && document == [self currentDocument])
+		[self resetLiveTailTrackingForCurrentDocument];
 	return YES;
 }
 
@@ -1408,9 +1994,13 @@ willBeInsertedIntoToolbar: (BOOL) flag
 
 	NSError *readError = nil;
 	NSStringEncoding detectedEncoding = NSUTF8StringEncoding;
-	NSString *content = [NSString stringWithContentsOfFile: document.filePath
-										usedEncoding: &detectedEncoding
-											   error: &readError];
+	NSString *content = nil;
+	BOOL ok = [self readTextFileAtPath: document.filePath
+							content: &content
+						usedEncoding: &detectedEncoding
+							   error: &readError];
+	if (!ok)
+		content = nil;
 	if (content == nil) {
 		NSAlert *alert = [[[NSAlert alloc] init] autorelease];
 		[alert setMessageText: @"Cannot revert file"];
@@ -1479,10 +2069,16 @@ willBeInsertedIntoToolbar: (BOOL) flag
 {
 	#pragma unused(sender)
 	[self ensureSearchPanel];
+	[self updateSearchScopeUiState];
 	if ([mSearchFindField stringValue].length == 0) {
 		NSString *selected = [mEditor selectedString];
 		if ([selected length] > 0)
 			[mSearchFindField setStringValue: selected];
+	}
+	if ([mSearchScopePopup indexOfSelectedItem] == 3 && [mSearchFolderField stringValue].length == 0) {
+		NPPDocument *document = [self currentDocument];
+		if ([document.filePath length] > 0)
+			[mSearchFolderField setStringValue: [document.filePath stringByDeletingLastPathComponent]];
 	}
 	[mSearchPanel makeKeyAndOrderFront: nil];
 	[[mSearchPanel windowController] showWindow: nil];
@@ -1493,7 +2089,7 @@ willBeInsertedIntoToolbar: (BOOL) flag
 	if (mSearchPanel != nil)
 		return;
 
-	mSearchPanel = [[NSPanel alloc] initWithContentRect: NSMakeRect(200, 200, 640, 280)
+	mSearchPanel = [[NSPanel alloc] initWithContentRect: NSMakeRect(200, 200, 700, 340)
 										 styleMask: NSTitledWindowMask | NSClosableWindowMask | NSUtilityWindowMask
 										   backing: NSBackingStoreBuffered
 											 defer: NO];
@@ -1501,97 +2097,133 @@ willBeInsertedIntoToolbar: (BOOL) flag
 
 	NSView *content = [mSearchPanel contentView];
 
-	NSTextField *findLabel = [[[NSTextField alloc] initWithFrame: NSMakeRect(20, 236, 90, 22)] autorelease];
+	NSTextField *findLabel = [[[NSTextField alloc] initWithFrame: NSMakeRect(20, 294, 90, 22)] autorelease];
 	[findLabel setEditable: NO];
 	[findLabel setBordered: NO];
 	[findLabel setDrawsBackground: NO];
 	[findLabel setStringValue: @"Find what:"];
 	[content addSubview: findLabel];
 
-	mSearchFindField = [[[NSTextField alloc] initWithFrame: NSMakeRect(110, 232, 360, 28)] autorelease];
+	mSearchFindField = [[[NSTextField alloc] initWithFrame: NSMakeRect(110, 290, 470, 28)] autorelease];
 	[content addSubview: mSearchFindField];
 
-	NSTextField *replaceLabel = [[[NSTextField alloc] initWithFrame: NSMakeRect(20, 198, 90, 22)] autorelease];
+	NSTextField *replaceLabel = [[[NSTextField alloc] initWithFrame: NSMakeRect(20, 256, 90, 22)] autorelease];
 	[replaceLabel setEditable: NO];
 	[replaceLabel setBordered: NO];
 	[replaceLabel setDrawsBackground: NO];
 	[replaceLabel setStringValue: @"Replace with:"];
 	[content addSubview: replaceLabel];
 
-	mSearchReplaceField = [[[NSTextField alloc] initWithFrame: NSMakeRect(110, 194, 360, 28)] autorelease];
+	mSearchReplaceField = [[[NSTextField alloc] initWithFrame: NSMakeRect(110, 252, 470, 28)] autorelease];
 	[content addSubview: mSearchReplaceField];
 
-	mSearchMatchCase = [[[NSButton alloc] initWithFrame: NSMakeRect(20, 156, 140, 22)] autorelease];
+	mSearchMatchCase = [[[NSButton alloc] initWithFrame: NSMakeRect(20, 214, 140, 22)] autorelease];
 	[mSearchMatchCase setButtonType: NSSwitchButton];
 	[mSearchMatchCase setTitle: @"Match case"];
 	[content addSubview: mSearchMatchCase];
 
-	mSearchWholeWord = [[[NSButton alloc] initWithFrame: NSMakeRect(170, 156, 170, 22)] autorelease];
+	mSearchWholeWord = [[[NSButton alloc] initWithFrame: NSMakeRect(170, 214, 170, 22)] autorelease];
 	[mSearchWholeWord setButtonType: NSSwitchButton];
 	[mSearchWholeWord setTitle: @"Whole word"];
 	[content addSubview: mSearchWholeWord];
 
-	mSearchRegex = [[[NSButton alloc] initWithFrame: NSMakeRect(350, 156, 120, 22)] autorelease];
+	mSearchRegex = [[[NSButton alloc] initWithFrame: NSMakeRect(350, 214, 120, 22)] autorelease];
 	[mSearchRegex setButtonType: NSSwitchButton];
 	[mSearchRegex setTitle: @"Regular expr"];
 	[content addSubview: mSearchRegex];
 
-	mSearchMarkAll = [[[NSButton alloc] initWithFrame: NSMakeRect(480, 156, 120, 22)] autorelease];
+	mSearchMarkAll = [[[NSButton alloc] initWithFrame: NSMakeRect(480, 214, 120, 22)] autorelease];
 	[mSearchMarkAll setButtonType: NSSwitchButton];
 	[mSearchMarkAll setTitle: @"Mark all"];
 	[content addSubview: mSearchMarkAll];
 
-	NSTextField *scopeLabel = [[[NSTextField alloc] initWithFrame: NSMakeRect(20, 118, 90, 22)] autorelease];
+	NSTextField *scopeLabel = [[[NSTextField alloc] initWithFrame: NSMakeRect(20, 176, 90, 22)] autorelease];
 	[scopeLabel setEditable: NO];
 	[scopeLabel setBordered: NO];
 	[scopeLabel setDrawsBackground: NO];
 	[scopeLabel setStringValue: @"Scope:"];
 	[content addSubview: scopeLabel];
 
-	mSearchScopePopup = [[[NSPopUpButton alloc] initWithFrame: NSMakeRect(110, 114, 220, 28) pullsDown: NO] autorelease];
-	[mSearchScopePopup addItemsWithTitles: [NSArray arrayWithObjects: @"Current Document", @"All Open Documents", @"Project Files", nil]];
+	mSearchScopePopup = [[[NSPopUpButton alloc] initWithFrame: NSMakeRect(110, 172, 220, 28) pullsDown: NO] autorelease];
+	[mSearchScopePopup addItemsWithTitles: [NSArray arrayWithObjects: @"Current Document", @"All Open Documents", @"Project Files", @"Folder", nil]];
+	[mSearchScopePopup setTarget: self];
+	[mSearchScopePopup setAction: @selector(updateSearchScopeUiState)];
 	[content addSubview: mSearchScopePopup];
 
-	NSTextField *filterLabel = [[[NSTextField alloc] initWithFrame: NSMakeRect(340, 118, 70, 22)] autorelease];
+	NSTextField *filterLabel = [[[NSTextField alloc] initWithFrame: NSMakeRect(340, 176, 70, 22)] autorelease];
 	[filterLabel setEditable: NO];
 	[filterLabel setBordered: NO];
 	[filterLabel setDrawsBackground: NO];
 	[filterLabel setStringValue: @"Filter:"];
 	[content addSubview: filterLabel];
 
-	mSearchFilterField = [[[NSTextField alloc] initWithFrame: NSMakeRect(410, 114, 190, 28)] autorelease];
+	mSearchFilterField = [[[NSTextField alloc] initWithFrame: NSMakeRect(410, 172, 260, 28)] autorelease];
 	[mSearchFilterField setPlaceholderString: @"*.mm;*.h"];
 	[content addSubview: mSearchFilterField];
 
-	NSButton *findNextButton = [[[NSButton alloc] initWithFrame: NSMakeRect(20, 58, 110, 32)] autorelease];
+	NSTextField *folderLabel = [[[NSTextField alloc] initWithFrame: NSMakeRect(20, 138, 90, 22)] autorelease];
+	[folderLabel setEditable: NO];
+	[folderLabel setBordered: NO];
+	[folderLabel setDrawsBackground: NO];
+	[folderLabel setStringValue: @"Folder:"];
+	[content addSubview: folderLabel];
+
+	mSearchFolderField = [[[NSTextField alloc] initWithFrame: NSMakeRect(110, 134, 480, 28)] autorelease];
+	[mSearchFolderField setPlaceholderString: @"/path/to/folder"];
+	[content addSubview: mSearchFolderField];
+
+	NSButton *browseFolderButton = [[[NSButton alloc] initWithFrame: NSMakeRect(598, 134, 72, 28)] autorelease];
+	[browseFolderButton setTitle: @"Browse"];
+	[browseFolderButton setTarget: self];
+	[browseFolderButton setAction: @selector(browseSearchFolder:)];
+	[content addSubview: browseFolderButton];
+
+	NSButton *findNextButton = [[[NSButton alloc] initWithFrame: NSMakeRect(20, 78, 120, 34)] autorelease];
 	[findNextButton setTitle: @"Find Next"];
 	[findNextButton setTarget: self];
 	[findNextButton setAction: @selector(searchPanelFindNext:)];
 	[content addSubview: findNextButton];
 
-	NSButton *findAllButton = [[[NSButton alloc] initWithFrame: NSMakeRect(140, 58, 110, 32)] autorelease];
+	NSButton *findAllButton = [[[NSButton alloc] initWithFrame: NSMakeRect(152, 78, 120, 34)] autorelease];
 	[findAllButton setTitle: @"Find All"];
 	[findAllButton setTarget: self];
 	[findAllButton setAction: @selector(searchPanelFindAll:)];
 	[content addSubview: findAllButton];
 
-	NSButton *replaceButton = [[[NSButton alloc] initWithFrame: NSMakeRect(260, 58, 110, 32)] autorelease];
+	NSButton *replaceButton = [[[NSButton alloc] initWithFrame: NSMakeRect(284, 78, 120, 34)] autorelease];
 	[replaceButton setTitle: @"Replace"];
 	[replaceButton setTarget: self];
 	[replaceButton setAction: @selector(searchPanelReplace:)];
 	[content addSubview: replaceButton];
 
-	NSButton *replaceAllButton = [[[NSButton alloc] initWithFrame: NSMakeRect(380, 58, 110, 32)] autorelease];
+	NSButton *replaceAllButton = [[[NSButton alloc] initWithFrame: NSMakeRect(416, 78, 120, 34)] autorelease];
 	[replaceAllButton setTitle: @"Replace All"];
 	[replaceAllButton setTarget: self];
 	[replaceAllButton setAction: @selector(searchPanelReplaceAll:)];
 	[content addSubview: replaceAllButton];
 
-	NSButton *markButton = [[[NSButton alloc] initWithFrame: NSMakeRect(500, 58, 110, 32)] autorelease];
+	NSButton *markButton = [[[NSButton alloc] initWithFrame: NSMakeRect(548, 78, 120, 34)] autorelease];
 	[markButton setTitle: @"Mark"];
 	[markButton setTarget: self];
 	[markButton setAction: @selector(searchPanelMarkAll:)];
 	[content addSubview: markButton];
+
+	[self updateSearchScopeUiState];
+}
+
+- (void) updateSearchScopeUiState
+{
+	if (mSearchScopePopup == nil)
+		return;
+
+	NSInteger scope = [mSearchScopePopup indexOfSelectedItem];
+	BOOL needsFilter = (scope == 2 || scope == 3);
+	BOOL needsFolder = (scope == 3);
+
+	[mSearchFilterField setEnabled: needsFilter];
+	[mSearchFolderField setEnabled: needsFolder];
+	if (mSearchFolderField != nil)
+		[mSearchFolderField setTextColor: needsFolder ? [NSColor controlTextColor] : [NSColor disabledControlTextColor]];
 }
 
 - (NSInteger) currentSearchFlagsFromPanel
@@ -1730,11 +2362,13 @@ willBeInsertedIntoToolbar: (BOOL) flag
 		if (!found)
 			NSBeep();
 	} else {
-		NSArray *files = [self projectFilesMatchingFilter: [mSearchFilterField stringValue]];
+		NSArray *files = [self filesForSearchScope: scope];
 		BOOL found = NO;
 		for (NSString *path in files) {
 			NSStringEncoding enc = NSUTF8StringEncoding;
-			NSString *text = [NSString stringWithContentsOfFile: path usedEncoding: &enc error: nil];
+			NSString *text = nil;
+			if (![self readTextFileAtPath: path content: &text usedEncoding: &enc error: nil] || text == nil)
+				continue;
 			if (text == nil)
 				continue;
 			NSArray *ranges = [self rangesForQuery: query inText: text regex: regex matchCase: matchCase wholeWord: wholeWord];
@@ -1796,10 +2430,12 @@ willBeInsertedIntoToolbar: (BOOL) flag
 			}];
 		}
 	} else {
-		NSArray *files = [self projectFilesMatchingFilter: [mSearchFilterField stringValue]];
+		NSArray *files = [self filesForSearchScope: scope];
 		for (NSString *path in files) {
 			NSStringEncoding encoding = NSUTF8StringEncoding;
-			NSString *text = [NSString stringWithContentsOfFile: path usedEncoding: &encoding error: nil];
+			NSString *text = nil;
+			if (![self readTextFileAtPath: path content: &text usedEncoding: &encoding error: nil] || text == nil)
+				continue;
 			if (text == nil)
 				continue;
 
@@ -1881,11 +2517,13 @@ willBeInsertedIntoToolbar: (BOOL) flag
 	NSInteger scope = [mSearchScopePopup indexOfSelectedItem];
 
 	NSUInteger replacements = 0;
-	if (scope == 2) {
-		NSArray *files = [self projectFilesMatchingFilter: [mSearchFilterField stringValue]];
+	if (scope == 2 || scope == 3) {
+		NSArray *files = [self filesForSearchScope: scope];
 		for (NSString *path in files) {
 			NSStringEncoding fileEncoding = NSUTF8StringEncoding;
-			NSString *text = [NSString stringWithContentsOfFile: path usedEncoding: &fileEncoding error: nil];
+			NSString *text = nil;
+			if (![self readTextFileAtPath: path content: &text usedEncoding: &fileEncoding error: nil] || text == nil)
+				continue;
 			if (text == nil)
 				continue;
 			NSString *updated = text;
@@ -1899,28 +2537,39 @@ willBeInsertedIntoToolbar: (BOOL) flag
 				updated = [rx stringByReplacingMatchesInString: text options: 0 range: NSMakeRange(0, [text length]) withTemplate: replacement];
 			} else {
 				NSArray *ranges = [self rangesForQuery: query inText: text regex: NO matchCase: matchCase wholeWord: wholeWord];
-				replacements += [ranges count];
-				if ([ranges count] > 0) {
-					NSStringCompareOptions options = matchCase ? 0 : NSCaseInsensitiveSearch;
-					if (wholeWord) {
-						NSMutableString *mutable = [text mutableCopy];
-						for (NSInteger i = [ranges count] - 1; i >= 0; --i) {
-							NSRange r = [[ranges objectAtIndex: i] rangeValue];
-							[mutable replaceCharactersInRange: r withString: replacement];
+					replacements += [ranges count];
+					if ([ranges count] > 0) {
+						NSStringCompareOptions options = matchCase ? 0 : NSCaseInsensitiveSearch;
+						if (wholeWord) {
+							NSMutableString *mutableText = [text mutableCopy];
+							for (NSInteger i = [ranges count] - 1; i >= 0; --i) {
+								NSRange r = [[ranges objectAtIndex: i] rangeValue];
+								[mutableText replaceCharactersInRange: r withString: replacement];
+							}
+							updated = [mutableText autorelease];
+						} else {
+							updated = [text stringByReplacingOccurrencesOfString: query withString: replacement options: options range: NSMakeRange(0, [text length])];
 						}
-						updated = [mutable autorelease];
-					} else {
-						updated = [text stringByReplacingOccurrencesOfString: query withString: replacement options: options range: NSMakeRange(0, [text length])];
 					}
-				}
 			}
 
 			if (![updated isEqualToString: text]) {
-				[updated writeToFile: path atomically: YES encoding: fileEncoding error: nil];
+				NSError *writeError = nil;
+				BOOL writeOk = [updated writeToFile: path atomically: YES encoding: fileEncoding error: &writeError];
+				if (!writeOk) {
+					writeOk = [updated writeToFile: path atomically: YES encoding: NSUTF8StringEncoding error: &writeError];
+					if (writeOk)
+						fileEncoding = NSUTF8StringEncoding;
+				}
+				if (!writeOk)
+					continue;
 				NPPDocument *openDoc = [self documentForPath: path];
 				if (openDoc != nil) {
 					[openDoc.editor setString: updated];
-					openDoc.dirty = YES;
+					openDoc.encoding = fileEncoding;
+					openDoc.dirty = NO;
+					openDoc.metadataDirty = NO;
+					[openDoc.editor setGeneralProperty: SCI_SETSAVEPOINT parameter: 0 value: 0];
 				}
 			}
 		}
@@ -1945,20 +2594,20 @@ willBeInsertedIntoToolbar: (BOOL) flag
 				updated = [rx stringByReplacingMatchesInString: text options: 0 range: NSMakeRange(0, [text length]) withTemplate: replacement];
 			} else {
 				NSArray *ranges = [self rangesForQuery: query inText: text regex: NO matchCase: matchCase wholeWord: wholeWord];
-				replacements += [ranges count];
-				if ([ranges count] > 0) {
-					NSStringCompareOptions options = matchCase ? 0 : NSCaseInsensitiveSearch;
-					if (wholeWord) {
-						NSMutableString *mutable = [text mutableCopy];
-						for (NSInteger i = [ranges count] - 1; i >= 0; --i) {
-							NSRange r = [[ranges objectAtIndex: i] rangeValue];
-							[mutable replaceCharactersInRange: r withString: replacement];
+					replacements += [ranges count];
+					if ([ranges count] > 0) {
+						NSStringCompareOptions options = matchCase ? 0 : NSCaseInsensitiveSearch;
+						if (wholeWord) {
+							NSMutableString *mutableText = [text mutableCopy];
+							for (NSInteger i = [ranges count] - 1; i >= 0; --i) {
+								NSRange r = [[ranges objectAtIndex: i] rangeValue];
+								[mutableText replaceCharactersInRange: r withString: replacement];
+							}
+							updated = [mutableText autorelease];
+						} else {
+							updated = [text stringByReplacingOccurrencesOfString: query withString: replacement options: options range: NSMakeRange(0, [text length])];
 						}
-						updated = [mutable autorelease];
-					} else {
-						updated = [text stringByReplacingOccurrencesOfString: query withString: replacement options: options range: NSMakeRange(0, [text length])];
 					}
-				}
 			}
 
 			if (![updated isEqualToString: text]) {
@@ -2091,86 +2740,58 @@ willBeInsertedIntoToolbar: (BOOL) flag
 - (IBAction) findInFiles: (id) sender
 {
 	#pragma unused(sender)
+	[self ensureSearchPanel];
+	[mSearchScopePopup selectItemAtIndex: 3];
+	[self updateSearchScopeUiState];
 
-	NSString *search = [self promptForStringWithTitle: @"Find in Files"
-										message: @"Text to find:"
-									defaultValue: mLastSearch];
-	if ([search length] == 0)
-		return;
+	if ([mSearchFindField stringValue].length == 0) {
+		NSString *selected = [mEditor selectedString];
+		if ([selected length] > 0)
+			[mSearchFindField setStringValue: selected];
+		else if ([mLastSearch length] > 0)
+			[mSearchFindField setStringValue: mLastSearch];
+	}
 
-	[mLastSearch release];
-	mLastSearch = [search copy];
+	if ([mSearchFolderField stringValue].length == 0) {
+		NPPDocument *document = [self currentDocument];
+		if ([document.filePath length] > 0) {
+			[mSearchFolderField setStringValue: [document.filePath stringByDeletingLastPathComponent]];
+		} else if ([mProjectRootPaths count] > 0) {
+			[mSearchFolderField setStringValue: [mProjectRootPaths objectAtIndex: 0]];
+		}
+	}
+
+	[mSearchPanel makeKeyAndOrderFront: nil];
+	[[mSearchPanel windowController] showWindow: nil];
+	[mSearchPanel makeFirstResponder: mSearchFindField];
+}
+
+- (IBAction) browseSearchFolder: (id) sender
+{
+	#pragma unused(sender)
+	[self ensureSearchPanel];
 
 	NSOpenPanel *panel = [NSOpenPanel openPanel];
 	[panel setCanChooseFiles: NO];
 	[panel setCanChooseDirectories: YES];
 	[panel setAllowsMultipleSelection: NO];
-	[panel setPrompt: @"Search"];
+	[panel setPrompt: @"Select"];
+
+	NSString *existing = [[mSearchFolderField stringValue] stringByStandardizingPath];
+	if ([existing length] > 0)
+		[panel setDirectoryURL: [NSURL fileURLWithPath: existing]];
 
 	if ([panel runModal] != NSFileHandlingPanelOKButton)
 		return;
 
-	NSArray *panelUrls = [panel URLs];
-	NSString *directory = ([panelUrls count] > 0) ? [[panelUrls objectAtIndex: 0] path] : nil;
-	if ([directory length] == 0)
+	NSArray *urls = [panel URLs];
+	if ([urls count] == 0)
 		return;
 
-	NSFileManager *fm = [NSFileManager defaultManager];
-	NSDirectoryEnumerator *enumerator = [fm enumeratorAtURL: [NSURL fileURLWithPath: directory]
-									includingPropertiesForKeys: [NSArray arrayWithObjects: NSURLIsRegularFileKey, nil]
-													   options: NSDirectoryEnumerationSkipsHiddenFiles
-												  errorHandler: nil];
-
-	NSMutableString *results = [NSMutableString stringWithFormat: @"Find in Files\nQuery: %@\nRoot: %@\n\n", search, directory];
-	NSUInteger fileCount = 0;
-	__block NSUInteger hitCount = 0;
-	NSUInteger maxHits = 2000;
-
-	for (NSURL *url in enumerator) {
-		NSNumber *isRegular = nil;
-		if (![url getResourceValue: &isRegular forKey: NSURLIsRegularFileKey error: nil] || ![isRegular boolValue])
-			continue;
-
-		fileCount++;
-
-		NSStringEncoding encoding = NSUTF8StringEncoding;
-		NSError *error = nil;
-		NSString *content = [NSString stringWithContentsOfFile: [url path]
-												  usedEncoding: &encoding
-														 error: &error];
-		if (content == nil)
-			continue;
-
-		__block NSUInteger lineNumber = 0;
-		__block BOOL fileHasHit = NO;
-		[content enumerateLinesUsingBlock: ^(NSString *line, BOOL *stop) {
-			lineNumber++;
-			if ([line rangeOfString: search options: NSCaseInsensitiveSearch].location != NSNotFound) {
-				if (!fileHasHit) {
-					[results appendFormat: @"\n%@\n", [url path]];
-					fileHasHit = YES;
-				}
-				[results appendFormat: @"  %lu: %@\n", (unsigned long)lineNumber, line];
-				hitCount++;
-				if (hitCount >= maxHits)
-					*stop = YES;
-			}
-		}];
-
-		if (hitCount >= maxHits)
-			break;
-	}
-
-	[results appendFormat: @"\n---\nScanned files: %lu\nMatches: %lu\n", (unsigned long)fileCount, (unsigned long)hitCount];
-	if (hitCount >= maxHits)
-		[results appendFormat: @"(Result limit reached: %lu)\n", (unsigned long)maxHits];
-
-	NPPDocument *resultDocument = [self createDocumentWithText: results path: nil encoding: NSUTF8StringEncoding];
-	[resultDocument.editor setGeneralProperty: SCI_SETSAVEPOINT parameter: 0 value: 0];
-	resultDocument.dirty = NO;
-	resultDocument.metadataDirty = NO;
-	[self updateDocumentTabs];
-	[self updateWindowTitle];
+	NSString *folder = [[[urls objectAtIndex: 0] path] stringByStandardizingPath];
+	[mSearchFolderField setStringValue: folder];
+	[mSearchScopePopup selectItemAtIndex: 3];
+	[self updateSearchScopeUiState];
 }
 
 - (IBAction) goToLine: (id) sender
@@ -2229,7 +2850,368 @@ willBeInsertedIntoToolbar: (BOOL) flag
 	mShowLineNumbers = !mShowLineNumbers;
 	for (NPPDocument *document in mDocuments)
 		[self applyDisplayFlagsToEditor: document.editor];
+	if (sciExtra != nil)
+		[self applyDisplayFlagsToEditor: sciExtra];
 	[self refreshUiToggles];
+}
+
+- (IBAction) toggleLiveTailCurrentFile: (id) sender
+{
+	#pragma unused(sender)
+	[self toggleLiveTailEnabled: !mLiveTailEnabled];
+}
+
+- (void) toggleLiveTailEnabled: (BOOL) enabled
+{
+	if (!enabled) {
+		mLiveTailEnabled = NO;
+		[mLiveTailPath release];
+		mLiveTailPath = nil;
+		mLiveTailKnownLength = 0;
+		[mLiveTailLastModificationDate release];
+		mLiveTailLastModificationDate = nil;
+		[self refreshUiToggles];
+		return;
+	}
+
+	NPPDocument *document = [self currentDocument];
+	if (document == nil || [document.filePath length] == 0) {
+		NSBeep();
+		if (document != nil)
+			[document.editor setStatusText: @"Live tail requires a saved file"];
+		return;
+	}
+
+	mLiveTailEnabled = YES;
+	[self resetLiveTailTrackingForCurrentDocument];
+	[document.editor setStatusText: @"Live tail enabled"];
+	[self refreshUiToggles];
+}
+
+- (IBAction) toggleSplitScreen: (id) sender
+{
+	#pragma unused(sender)
+	mSplitViewEnabled = !mSplitViewEnabled;
+	if (mSplitViewEnabled)
+		mDocumentMapVisible = NO;
+
+	if (!(mSplitViewEnabled || mDocumentMapVisible)) {
+		[self removeExtraEditor];
+		[mComparedFilePath release];
+		mComparedFilePath = nil;
+	} else {
+		[self ensureExtraEditorForCurrentDocument];
+	}
+
+	[self refreshUiToggles];
+}
+
+- (IBAction) toggleDocumentMap: (id) sender
+{
+	#pragma unused(sender)
+	mDocumentMapVisible = !mDocumentMapVisible;
+	if (mDocumentMapVisible) {
+		mSplitViewEnabled = NO;
+		[mComparedFilePath release];
+		mComparedFilePath = nil;
+	}
+
+	if (!(mSplitViewEnabled || mDocumentMapVisible))
+		[self removeExtraEditor];
+	else
+		[self ensureExtraEditorForCurrentDocument];
+
+	[self refreshUiToggles];
+}
+
+- (IBAction) toggleAutosave: (id) sender
+{
+	#pragma unused(sender)
+	mAutosaveEnabled = !mAutosaveEnabled;
+	mNextAutosaveTime = [NSDate timeIntervalSinceReferenceDate] + kNppMacAutosaveIntervalSeconds;
+	if (mEditor != nil)
+		[mEditor setStatusText: mAutosaveEnabled ? @"Autosave enabled" : @"Autosave disabled"];
+	[self refreshUiToggles];
+}
+
+- (IBAction) compareCurrentWithFile: (id) sender
+{
+	#pragma unused(sender)
+	NPPDocument *document = [self currentDocument];
+	if (document == nil)
+		return;
+
+	NSOpenPanel *panel = [NSOpenPanel openPanel];
+	[panel setCanChooseFiles: YES];
+	[panel setCanChooseDirectories: NO];
+	[panel setAllowsMultipleSelection: NO];
+	[panel setPrompt: @"Compare"];
+
+	if ([panel runModal] != NSFileHandlingPanelOKButton)
+		return;
+
+	NSArray *urls = [panel URLs];
+	if ([urls count] == 0)
+		return;
+
+	NSString *otherPath = [[[urls objectAtIndex: 0] path] stringByStandardizingPath];
+	if ([otherPath length] == 0)
+		return;
+
+	mSplitViewEnabled = YES;
+	mDocumentMapVisible = NO;
+	[mComparedFilePath release];
+	mComparedFilePath = [otherPath copy];
+	[self ensureExtraEditorForCurrentDocument];
+
+	if (mEditor != nil)
+		[mEditor setStatusText: [NSString stringWithFormat: @"Comparing with %@", [otherPath lastPathComponent]]];
+	[self refreshUiToggles];
+}
+
+- (IBAction) sortSelectedLinesAscending: (id) sender
+{
+	#pragma unused(sender)
+	NPPDocument *document = [self currentDocument];
+	if (document == nil)
+		return;
+
+	NSString *text = [document.editor string];
+	NSRange selection = [self currentSelectionRangeInEditor: document.editor];
+	NSRange lineRange = (selection.length == 0) ? NSMakeRange(0, [text length]) : [text lineRangeForRange: selection];
+	NSString *segment = [text substringWithRange: lineRange];
+
+	NSMutableArray *lines = [NSMutableArray array];
+	[segment enumerateLinesUsingBlock: ^(NSString *line, BOOL *stop) {
+		#pragma unused(stop)
+		[lines addObject: line];
+	}];
+	if ([lines count] == 0)
+		return;
+
+	[lines sortUsingComparator: ^NSComparisonResult(id lhs, id rhs) {
+		return [(NSString *)lhs localizedCaseInsensitiveCompare: (NSString *)rhs];
+	}];
+
+	BOOL hadTrailingNewline = [segment hasSuffix: @"\n"] || [segment hasSuffix: @"\r"];
+	NSString *replacement = [lines componentsJoinedByString: @"\n"];
+	if (hadTrailingNewline)
+		replacement = [replacement stringByAppendingString: @"\n"];
+
+	NSMutableString *updated = [[text mutableCopy] autorelease];
+	[updated replaceCharactersInRange: lineRange withString: replacement];
+	[document.editor setString: updated];
+	[document.editor setGeneralProperty: SCI_SETSEL parameter: lineRange.location value: lineRange.location + [replacement length]];
+	document.dirty = YES;
+}
+
+- (IBAction) sortSelectedLinesDescending: (id) sender
+{
+	#pragma unused(sender)
+	NPPDocument *document = [self currentDocument];
+	if (document == nil)
+		return;
+
+	NSString *text = [document.editor string];
+	NSRange selection = [self currentSelectionRangeInEditor: document.editor];
+	NSRange lineRange = (selection.length == 0) ? NSMakeRange(0, [text length]) : [text lineRangeForRange: selection];
+	NSString *segment = [text substringWithRange: lineRange];
+
+	NSMutableArray *lines = [NSMutableArray array];
+	[segment enumerateLinesUsingBlock: ^(NSString *line, BOOL *stop) {
+		#pragma unused(stop)
+		[lines addObject: line];
+	}];
+	if ([lines count] == 0)
+		return;
+
+	[lines sortUsingComparator: ^NSComparisonResult(id lhs, id rhs) {
+		return [(NSString *)rhs localizedCaseInsensitiveCompare: (NSString *)lhs];
+	}];
+
+	BOOL hadTrailingNewline = [segment hasSuffix: @"\n"] || [segment hasSuffix: @"\r"];
+	NSString *replacement = [lines componentsJoinedByString: @"\n"];
+	if (hadTrailingNewline)
+		replacement = [replacement stringByAppendingString: @"\n"];
+
+	NSMutableString *updated = [[text mutableCopy] autorelease];
+	[updated replaceCharactersInRange: lineRange withString: replacement];
+	[document.editor setString: updated];
+	[document.editor setGeneralProperty: SCI_SETSEL parameter: lineRange.location value: lineRange.location + [replacement length]];
+	document.dirty = YES;
+}
+
+- (IBAction) trimTrailingWhitespaceLines: (id) sender
+{
+	#pragma unused(sender)
+	[self replaceSelectedOrWholeTextInCurrentDocumentUsingBlock: ^NSString *(NSString *input, NSRange range, BOOL *didChange) {
+		NSMutableString *output = [NSMutableString string];
+		[input enumerateSubstringsInRange: range
+								  options: NSStringEnumerationByLines | NSStringEnumerationSubstringNotRequired
+							   usingBlock: ^(NSString *substring, NSRange substringRange, NSRange enclosingRange, BOOL *stop) {
+								   #pragma unused(substring)
+								   #pragma unused(stop)
+								   NSString *line = [input substringWithRange: substringRange];
+								   NSString *trimmed = [line stringByReplacingOccurrencesOfString: @"[ \t]+$"
+																				   withString: @""
+																					  options: NSRegularExpressionSearch
+																						range: NSMakeRange(0, [line length])];
+								   NSRange endingRange = NSMakeRange(NSMaxRange(substringRange), NSMaxRange(enclosingRange) - NSMaxRange(substringRange));
+								   NSString *lineEnding = (endingRange.length > 0) ? [input substringWithRange: endingRange] : @"";
+								   [output appendString: trimmed];
+								   [output appendString: lineEnding];
+							   }];
+		NSString *original = [input substringWithRange: range];
+		*didChange = ![original isEqualToString: output];
+		return output;
+	}];
+}
+
+- (IBAction) convertSelectionToUpperCase: (id) sender
+{
+	#pragma unused(sender)
+	[self replaceSelectedOrWholeTextInCurrentDocumentUsingBlock: ^NSString *(NSString *input, NSRange range, BOOL *didChange) {
+		NSString *original = [input substringWithRange: range];
+		NSString *result = [original uppercaseString];
+		*didChange = ![original isEqualToString: result];
+		return result;
+	}];
+}
+
+- (IBAction) convertSelectionToLowerCase: (id) sender
+{
+	#pragma unused(sender)
+	[self replaceSelectedOrWholeTextInCurrentDocumentUsingBlock: ^NSString *(NSString *input, NSRange range, BOOL *didChange) {
+		NSString *original = [input substringWithRange: range];
+		NSString *result = [original lowercaseString];
+		*didChange = ![original isEqualToString: result];
+		return result;
+	}];
+}
+
+- (IBAction) convertSelectionToCamelCase: (id) sender
+{
+	#pragma unused(sender)
+	[self replaceSelectedOrWholeTextInCurrentDocumentUsingBlock: ^NSString *(NSString *input, NSRange range, BOOL *didChange) {
+		NSString *original = [input substringWithRange: range];
+		NSString *result = [self camelCaseFromString: original];
+		*didChange = ![original isEqualToString: result];
+		return result;
+	}];
+}
+
+- (void) resetLiveTailTrackingForCurrentDocument
+{
+	if (!mLiveTailEnabled)
+		return;
+
+	NPPDocument *document = [self currentDocument];
+	if (document == nil || [document.filePath length] == 0)
+		return;
+
+	NSString *path = [document.filePath stringByStandardizingPath];
+	if (mLiveTailPath == nil || ![mLiveTailPath isEqualToString: path]) {
+		[mLiveTailPath release];
+		mLiveTailPath = [path copy];
+	}
+
+	NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath: path error: nil];
+	mLiveTailKnownLength = [[attributes objectForKey: NSFileSize] unsignedLongLongValue];
+	[mLiveTailLastModificationDate release];
+	mLiveTailLastModificationDate = [[attributes objectForKey: NSFileModificationDate] copy];
+}
+
+- (void) refreshLiveTail
+{
+	if (!mLiveTailEnabled)
+		return;
+
+	NPPDocument *document = [self currentDocument];
+	if (document == nil || [document.filePath length] == 0)
+		return;
+
+	NSString *path = [document.filePath stringByStandardizingPath];
+	if (mLiveTailPath == nil || ![mLiveTailPath isEqualToString: path]) {
+		[self resetLiveTailTrackingForCurrentDocument];
+		return;
+	}
+
+	NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath: path error: nil];
+	if (attributes == nil)
+		return;
+
+	unsigned long long fileSize = [[attributes objectForKey: NSFileSize] unsignedLongLongValue];
+	NSDate *modifiedDate = [attributes objectForKey: NSFileModificationDate];
+	BOOL hasSizeChange = (fileSize != mLiveTailKnownLength);
+	BOOL hasTimeChange = (mLiveTailLastModificationDate == nil && modifiedDate != nil) ||
+		(mLiveTailLastModificationDate != nil && modifiedDate != nil && [modifiedDate compare: mLiveTailLastModificationDate] == NSOrderedDescending);
+	if (!hasSizeChange && !hasTimeChange)
+		return;
+
+	BOOL reloadedAll = NO;
+	if (fileSize < mLiveTailKnownLength) {
+		NSStringEncoding detectedEncoding = document.encoding;
+		NSString *content = nil;
+		if ([self readTextFileAtPath: path content: &content usedEncoding: &detectedEncoding error: nil] && content != nil) {
+			[document.editor setString: content];
+			document.encoding = detectedEncoding;
+			[self applyLexerToDocument: document];
+			reloadedAll = YES;
+		}
+	} else if (fileSize > mLiveTailKnownLength) {
+		NSFileHandle *handle = [NSFileHandle fileHandleForReadingAtPath: path];
+		NSData *delta = nil;
+		@try {
+			[handle seekToFileOffset: mLiveTailKnownLength];
+			delta = [handle readDataToEndOfFile];
+		} @catch (NSException *exception) {
+			#pragma unused(exception)
+			delta = nil;
+		}
+		[handle closeFile];
+
+		if ([delta length] > 0) {
+			NSStringEncoding chunkEncoding = (document.encoding != 0) ? document.encoding : NSUTF8StringEncoding;
+			NSString *deltaText = [[[NSString alloc] initWithData: delta encoding: chunkEncoding] autorelease];
+			if (deltaText == nil) {
+				NSStringEncoding fallback = [self detectEncodingForData: delta fallbackEncoding: chunkEncoding];
+				deltaText = [[[NSString alloc] initWithData: delta encoding: fallback] autorelease];
+			}
+
+			if (deltaText != nil) {
+				NSData *utf8 = [deltaText dataUsingEncoding: NSUTF8StringEncoding allowLossyConversion: YES];
+				if ([utf8 length] > 0) {
+					[document.editor message: SCI_APPENDTEXT wParam: [utf8 length] lParam: (sptr_t)[utf8 bytes]];
+					long endPos = [document.editor getGeneralProperty: SCI_GETLENGTH parameter: 0];
+					[document.editor setGeneralProperty: SCI_GOTOPOS parameter: endPos value: 0];
+					[document.editor setGeneralProperty: SCI_SCROLLCARET parameter: 0 value: 0];
+				}
+			} else {
+				NSStringEncoding detectedEncoding = document.encoding;
+				NSString *content = nil;
+				if ([self readTextFileAtPath: path content: &content usedEncoding: &detectedEncoding error: nil] && content != nil) {
+					[document.editor setString: content];
+					document.encoding = detectedEncoding;
+					[self applyLexerToDocument: document];
+					reloadedAll = YES;
+				}
+			}
+		}
+	}
+
+	if (reloadedAll) {
+		long endPos = [document.editor getGeneralProperty: SCI_GETLENGTH parameter: 0];
+		[document.editor setGeneralProperty: SCI_GOTOPOS parameter: endPos value: 0];
+		[document.editor setGeneralProperty: SCI_SCROLLCARET parameter: 0 value: 0];
+	}
+
+	[document.editor setGeneralProperty: SCI_SETSAVEPOINT parameter: 0 value: 0];
+	document.dirty = NO;
+	document.metadataDirty = NO;
+
+	mLiveTailKnownLength = fileSize;
+	[mLiveTailLastModificationDate release];
+	mLiveTailLastModificationDate = [modifiedDate copy];
 }
 
 - (IBAction) toggleSidebar: (id) sender
@@ -2555,9 +3537,9 @@ willBeInsertedIntoToolbar: (BOOL) flag
 			[descriptor setObject: fullPath forKey: @"path"];
 			[descriptor setObject: [NSNumber numberWithInt: apiVersion] forKey: @"apiVersion"];
 			[descriptor setObject: [NSValue valueWithPointer: handle] forKey: @"handle"];
-			[descriptor setObject: [NSValue valueWithPointer: deinitFn] forKey: @"deinit"];
-			[descriptor setObject: [NSValue valueWithPointer: runFn] forKey: @"run"];
-			[descriptor setObject: [NSValue valueWithPointer: runCommandFn] forKey: @"runCommand"];
+			[descriptor setObject: [NSValue valueWithBytes: &deinitFn objCType: @encode(NppMacPluginDeinitFn)] forKey: @"deinit"];
+			[descriptor setObject: [NSValue valueWithBytes: &runFn objCType: @encode(NppMacPluginRunFn)] forKey: @"run"];
+			[descriptor setObject: [NSValue valueWithBytes: &runCommandFn objCType: @encode(NppMacPluginRunCommandFn)] forKey: @"runCommand"];
 			[descriptor setObject: commands forKey: @"commands"];
 			[mPluginDescriptors addObject: descriptor];
 		}
@@ -2570,7 +3552,10 @@ willBeInsertedIntoToolbar: (BOOL) flag
 {
 	#pragma unused(sender)
 	for (NSDictionary *plugin in mPluginDescriptors) {
-		NppMacPluginDeinitFn deinitFn = (NppMacPluginDeinitFn)[[plugin objectForKey: @"deinit"] pointerValue];
+		NppMacPluginDeinitFn deinitFn = NULL;
+		NSValue *deinitValue = [plugin objectForKey: @"deinit"];
+		if ([deinitValue isKindOfClass: [NSValue class]])
+			[deinitValue getValue: &deinitFn];
 		void *handle = [[plugin objectForKey: @"handle"] pointerValue];
 		if (deinitFn != NULL)
 			deinitFn(self);
@@ -2599,14 +3584,20 @@ willBeInsertedIntoToolbar: (BOOL) flag
 		return;
 	}
 
-	NppMacPluginRunCommandFn runCommandFn = (NppMacPluginRunCommandFn)[[plugin objectForKey: @"runCommand"] pointerValue];
+	NppMacPluginRunCommandFn runCommandFn = NULL;
+	NSValue *runCommandValue = [plugin objectForKey: @"runCommand"];
+	if ([runCommandValue isKindOfClass: [NSValue class]])
+		[runCommandValue getValue: &runCommandFn];
 	if (runCommandFn != NULL && [command isKindOfClass: [NSDictionary class]]) {
 		int index = [[command objectForKey: @"index"] intValue];
 		runCommandFn(index, self);
 		return;
 	}
 
-	NppMacPluginRunFn runFn = (NppMacPluginRunFn)[[plugin objectForKey: @"run"] pointerValue];
+	NppMacPluginRunFn runFn = NULL;
+	NSValue *runValue = [plugin objectForKey: @"run"];
+	if ([runValue isKindOfClass: [NSValue class]])
+		[runValue getValue: &runFn];
 	if (runFn != NULL) {
 		runFn(self);
 		return;
@@ -3004,6 +3995,48 @@ willBeInsertedIntoToolbar: (BOOL) flag
 	[self applyEncoding: NSUTF16BigEndianStringEncoding toCurrentDocumentWithName: @"UTF-16 BE"];
 }
 
+- (IBAction) setEncodingIso88591: (id) sender
+{
+	#pragma unused(sender)
+	[self applyEncoding: NSISOLatin1StringEncoding toCurrentDocumentWithName: @"ISO-8859-1"];
+}
+
+- (IBAction) setEncodingWindows1252: (id) sender
+{
+	#pragma unused(sender)
+	[self applyEncoding: nppEncodingWindows1252() toCurrentDocumentWithName: @"Windows-1252"];
+}
+
+- (IBAction) setEncodingWindows1251: (id) sender
+{
+	#pragma unused(sender)
+	[self applyEncoding: nppEncodingWindows1251() toCurrentDocumentWithName: @"Windows-1251"];
+}
+
+- (IBAction) setEncodingShiftJis: (id) sender
+{
+	#pragma unused(sender)
+	[self applyEncoding: nppEncodingShiftJis() toCurrentDocumentWithName: @"Shift_JIS"];
+}
+
+- (IBAction) setEncodingGb18030: (id) sender
+{
+	#pragma unused(sender)
+	[self applyEncoding: nppEncodingGb18030() toCurrentDocumentWithName: @"GB18030"];
+}
+
+- (IBAction) setEncodingBig5: (id) sender
+{
+	#pragma unused(sender)
+	[self applyEncoding: nppEncodingBig5() toCurrentDocumentWithName: @"Big5"];
+}
+
+- (IBAction) setEncodingEucKr: (id) sender
+{
+	#pragma unused(sender)
+	[self applyEncoding: nppEncodingEucKr() toCurrentDocumentWithName: @"EUC-KR"];
+}
+
 - (void) refreshFunctionList
 {
 	[mFunctionEntries removeAllObjects];
@@ -3126,11 +4159,7 @@ willBeInsertedIntoToolbar: (BOOL) flag
 - (NSArray *) projectFilesMatchingFilter: (NSString *) filter
 {
 	NSMutableArray *results = [NSMutableArray array];
-	NSArray *tokens = nil;
-	if ([filter length] > 0) {
-		NSString *normalized = [[filter stringByReplacingOccurrencesOfString: @"," withString: @";"] stringByReplacingOccurrencesOfString: @" " withString: @""];
-		tokens = [normalized componentsSeparatedByString: @";"];
-	}
+	NSArray *tokens = [self searchFilterTokensFromString: filter];
 
 	for (NSDictionary *entry in mProjectEntries) {
 		if ([[entry objectForKey: @"isRoot"] boolValue])
@@ -3139,36 +4168,10 @@ willBeInsertedIntoToolbar: (BOOL) flag
 		if ([path length] == 0)
 			continue;
 
-		BOOL include = YES;
-		if ([tokens count] > 0) {
-			include = NO;
-			NSString *filename = [path lastPathComponent];
-			NSString *extension = [[filename pathExtension] lowercaseString];
-			for (NSString *rawToken in tokens) {
-				NSString *token = [rawToken lowercaseString];
-				if ([token length] == 0)
-					continue;
-				if ([token isEqualToString: @"*"] || [token isEqualToString: @"*.*"]) {
-					include = YES;
-					break;
-				}
-				if ([token hasPrefix: @"*."]) {
-					NSString *ext = [token substringFromIndex: 2];
-					if ([extension isEqualToString: ext]) {
-						include = YES;
-						break;
-					}
-					continue;
-				}
-				if ([[filename lowercaseString] isEqualToString: token]) {
-					include = YES;
-					break;
-				}
-			}
-		}
-
-		if (include && [[NSFileManager defaultManager] fileExistsAtPath: path])
+		if ([self filePath: path matchesFilterTokens: tokens] &&
+			[[NSFileManager defaultManager] fileExistsAtPath: path]) {
 			[results addObject: path];
+		}
 	}
 
 	if ([results count] == 0) {
@@ -3179,6 +4182,97 @@ willBeInsertedIntoToolbar: (BOOL) flag
 	}
 
 	return results;
+}
+
+- (NSArray *) searchFilterTokensFromString: (NSString *) filter
+{
+	if ([filter length] == 0)
+		return [NSArray array];
+
+	NSMutableCharacterSet *separators = [[NSCharacterSet whitespaceAndNewlineCharacterSet] mutableCopy];
+	[separators addCharactersInString: @";,"];
+	NSArray *rawTokens = [filter componentsSeparatedByCharactersInSet: separators];
+	[separators release];
+
+	NSMutableArray *tokens = [NSMutableArray array];
+	for (NSString *raw in rawTokens) {
+		NSString *token = [[raw stringByTrimmingCharactersInSet: [NSCharacterSet whitespaceAndNewlineCharacterSet]] lowercaseString];
+		if ([token length] == 0)
+			continue;
+		[tokens addObject: token];
+	}
+	return tokens;
+}
+
+- (BOOL) filePath: (NSString *) path matchesFilterTokens: (NSArray *) tokens
+{
+	if ([tokens count] == 0)
+		return YES;
+
+	NSString *filename = [[path lastPathComponent] lowercaseString];
+	NSString *fullPath = [path lowercaseString];
+	for (NSString *token in tokens) {
+		if ([token isEqualToString: @"*"] || [token isEqualToString: @"*.*"])
+			return YES;
+
+		NSPredicate *predicate = [NSPredicate predicateWithFormat: @"SELF LIKE %@", token];
+		if ([predicate evaluateWithObject: filename] || [predicate evaluateWithObject: fullPath])
+			return YES;
+	}
+
+	return NO;
+}
+
+- (NSArray *) filesInFolder: (NSString *) folderPath matchingFilter: (NSString *) filter
+{
+	NSString *normalizedFolder = [folderPath stringByStandardizingPath];
+	if ([normalizedFolder length] == 0)
+		return [NSArray array];
+
+	BOOL isDirectory = NO;
+	if (![[NSFileManager defaultManager] fileExistsAtPath: normalizedFolder isDirectory: &isDirectory] || !isDirectory)
+		return [NSArray array];
+
+	NSArray *tokens = [self searchFilterTokensFromString: filter];
+	NSDirectoryEnumerator *enumerator = [[NSFileManager defaultManager] enumeratorAtURL: [NSURL fileURLWithPath: normalizedFolder]
+															 includingPropertiesForKeys: [NSArray arrayWithObjects: NSURLIsRegularFileKey, nil]
+																				options: NSDirectoryEnumerationSkipsHiddenFiles
+																		   errorHandler: nil];
+
+	NSMutableArray *results = [NSMutableArray array];
+	NSUInteger count = 0;
+	for (NSURL *url in enumerator) {
+		NSNumber *isRegular = nil;
+		if (![url getResourceValue: &isRegular forKey: NSURLIsRegularFileKey error: nil] || ![isRegular boolValue])
+			continue;
+
+		NSString *path = [url path];
+		if (![self filePath: path matchesFilterTokens: tokens])
+			continue;
+
+		[results addObject: path];
+		count++;
+		if (count >= 30000)
+			break;
+	}
+
+	return results;
+}
+
+- (NSArray *) filesForSearchScope: (NSInteger) scope
+{
+	if (scope == 2)
+		return [self projectFilesMatchingFilter: [mSearchFilterField stringValue]];
+	if (scope == 3) {
+		NSString *folder = [[mSearchFolderField stringValue] stringByStandardizingPath];
+		if ([folder length] == 0) {
+			NPPDocument *document = [self currentDocument];
+			if ([document.filePath length] > 0)
+				folder = [document.filePath stringByDeletingLastPathComponent];
+		}
+		return [self filesInFolder: folder matchingFilter: [mSearchFilterField stringValue]];
+	}
+	return [NSArray array];
 }
 
 - (void) addProjectRootPath: (NSString *) rootPath
@@ -3249,29 +4343,296 @@ willBeInsertedIntoToolbar: (BOOL) flag
 	return [[[inputField stringValue] copy] autorelease];
 }
 
+- (NSRange) currentSelectionRangeInEditor: (ScintillaView *) editor
+{
+	if (editor == nil)
+		return NSMakeRange(NSNotFound, 0);
+
+	long start = [editor getGeneralProperty: SCI_GETSELECTIONSTART parameter: 0];
+	long end = [editor getGeneralProperty: SCI_GETSELECTIONEND parameter: 0];
+	if (start > end) {
+		long tmp = start;
+		start = end;
+		end = tmp;
+	}
+	return NSMakeRange((NSUInteger)MAX(0, start), (NSUInteger)MAX(0, end - start));
+}
+
+- (void) replaceSelectedOrWholeTextInCurrentDocumentUsingBlock: (NSString *(^)(NSString *input, NSRange range, BOOL *didChange)) transform
+{
+	if (transform == nil)
+		return;
+
+	NPPDocument *document = [self currentDocument];
+	if (document == nil)
+		return;
+
+	NSString *text = [document.editor string];
+	if (text == nil)
+		return;
+
+	NSRange selection = [self currentSelectionRangeInEditor: document.editor];
+	if (selection.location == NSNotFound)
+		return;
+	NSRange range = (selection.length == 0) ? NSMakeRange(0, [text length]) : selection;
+	if (range.location > [text length] || NSMaxRange(range) > [text length])
+		return;
+
+	BOOL didChange = NO;
+	NSString *replacement = transform(text, range, &didChange);
+	if (!didChange || replacement == nil)
+		return;
+
+	NSMutableString *updated = [[text mutableCopy] autorelease];
+	[updated replaceCharactersInRange: range withString: replacement];
+	[document.editor setString: updated];
+	[document.editor setGeneralProperty: SCI_SETSEL parameter: range.location value: range.location + [replacement length]];
+	document.dirty = YES;
+}
+
+- (NSString *) camelCaseFromString: (NSString *) source
+{
+	if (source == nil || [source length] == 0)
+		return source;
+
+	NSArray *rawParts = [source componentsSeparatedByCharactersInSet: [[NSCharacterSet alphanumericCharacterSet] invertedSet]];
+	NSMutableArray *parts = [NSMutableArray array];
+	for (NSString *part in rawParts) {
+		if ([part length] == 0)
+			continue;
+		[parts addObject: [part lowercaseString]];
+	}
+	if ([parts count] == 0)
+		return source;
+
+	NSMutableString *result = [NSMutableString stringWithString: [parts objectAtIndex: 0]];
+	for (NSUInteger i = 1; i < [parts count]; ++i) {
+		NSString *part = [parts objectAtIndex: i];
+		NSString *head = [[part substringToIndex: 1] uppercaseString];
+		NSString *tail = ([part length] > 1) ? [part substringFromIndex: 1] : @"";
+		[result appendString: head];
+		[result appendString: tail];
+	}
+	return result;
+}
+
+- (BOOL) readTextFileAtPath: (NSString *) path
+					content: (NSString **) outContent
+				usedEncoding: (NSStringEncoding *) outEncoding
+					   error: (NSError **) outError
+{
+	if ([path length] == 0) {
+		if (outError != nil) {
+			*outError = [NSError errorWithDomain: NSCocoaErrorDomain
+										code: NSFileReadInvalidFileNameError
+									userInfo: [NSDictionary dictionaryWithObject: @"Empty file path" forKey: NSLocalizedDescriptionKey]];
+		}
+		return NO;
+	}
+
+	NSData *data = [NSData dataWithContentsOfFile: path options: NSDataReadingMappedIfSafe error: outError];
+	if (data == nil)
+		return NO;
+
+	if ([data length] == 0) {
+		if (outContent != nil)
+			*outContent = @"";
+		if (outEncoding != nil)
+			*outEncoding = NSUTF8StringEncoding;
+		return YES;
+	}
+
+	NSStringEncoding detectedEncoding = [self detectEncodingForData: data fallbackEncoding: NSUTF8StringEncoding];
+	NSString *text = [[[NSString alloc] initWithData: data encoding: detectedEncoding] autorelease];
+
+	if (text == nil) {
+		NSArray *candidates = [NSArray arrayWithObjects:
+			[NSNumber numberWithUnsignedInteger: NSUTF8StringEncoding],
+			[NSNumber numberWithUnsignedInteger: NSUTF16LittleEndianStringEncoding],
+			[NSNumber numberWithUnsignedInteger: NSUTF16BigEndianStringEncoding],
+			[NSNumber numberWithUnsignedInteger: NSISOLatin1StringEncoding],
+			[NSNumber numberWithUnsignedInteger: nppEncodingWindows1252()],
+			[NSNumber numberWithUnsignedInteger: nppEncodingWindows1251()],
+			[NSNumber numberWithUnsignedInteger: nppEncodingShiftJis()],
+			[NSNumber numberWithUnsignedInteger: nppEncodingGb18030()],
+			[NSNumber numberWithUnsignedInteger: nppEncodingBig5()],
+			[NSNumber numberWithUnsignedInteger: nppEncodingEucKr()],
+			nil];
+		for (NSNumber *candidate in candidates) {
+			NSStringEncoding candidateEncoding = [candidate unsignedIntegerValue];
+			if (candidateEncoding == detectedEncoding)
+				continue;
+			text = [[[NSString alloc] initWithData: data encoding: candidateEncoding] autorelease];
+			if (text != nil) {
+				detectedEncoding = candidateEncoding;
+				break;
+			}
+		}
+	}
+
+	if (text == nil) {
+		NSError *fallbackError = nil;
+		NSStringEncoding fallbackEncoding = NSUTF8StringEncoding;
+		text = [NSString stringWithContentsOfFile: path usedEncoding: &fallbackEncoding error: &fallbackError];
+		if (text == nil) {
+			if (outError != nil)
+				*outError = fallbackError;
+			return NO;
+		}
+		detectedEncoding = fallbackEncoding;
+	}
+
+	if (outContent != nil)
+		*outContent = text;
+	if (outEncoding != nil)
+		*outEncoding = detectedEncoding;
+	return YES;
+}
+
+- (NSStringEncoding) detectEncodingForData: (NSData *) data fallbackEncoding: (NSStringEncoding) fallbackEncoding
+{
+	if (data == nil || [data length] == 0)
+		return fallbackEncoding;
+
+	const unsigned char *bytes = (const unsigned char *)[data bytes];
+	NSUInteger length = [data length];
+
+	if (length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+		return NSUTF8StringEncoding;
+	if (length >= 4 && bytes[0] == 0xFF && bytes[1] == 0xFE && bytes[2] == 0x00 && bytes[3] == 0x00)
+		return NSUTF32LittleEndianStringEncoding;
+	if (length >= 4 && bytes[0] == 0x00 && bytes[1] == 0x00 && bytes[2] == 0xFE && bytes[3] == 0xFF)
+		return NSUTF32BigEndianStringEncoding;
+	if (length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
+		return NSUTF16LittleEndianStringEncoding;
+	if (length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF)
+		return NSUTF16BigEndianStringEncoding;
+
+	NSUInteger sampleLength = MIN(length, (NSUInteger)8192);
+	NSUInteger evenNulls = 0;
+	NSUInteger oddNulls = 0;
+	for (NSUInteger i = 0; i < sampleLength; ++i) {
+		if (bytes[i] == 0x00) {
+			if ((i % 2) == 0)
+				evenNulls++;
+			else
+				oddNulls++;
+		}
+	}
+
+	if (sampleLength > 32) {
+		double evenRatio = (double)evenNulls / (double)sampleLength;
+		double oddRatio = (double)oddNulls / (double)sampleLength;
+		if (evenRatio > 0.20 && oddRatio < 0.05)
+			return NSUTF16BigEndianStringEncoding;
+		if (oddRatio > 0.20 && evenRatio < 0.05)
+			return NSUTF16LittleEndianStringEncoding;
+	}
+
+	if ([self isLikelyUtf8Data: data])
+		return NSUTF8StringEncoding;
+
+	NSArray *candidates = [NSArray arrayWithObjects:
+		[NSNumber numberWithUnsignedInteger: NSUTF8StringEncoding],
+		[NSNumber numberWithUnsignedInteger: nppEncodingWindows1252()],
+		[NSNumber numberWithUnsignedInteger: NSISOLatin1StringEncoding],
+		[NSNumber numberWithUnsignedInteger: nppEncodingWindows1251()],
+		[NSNumber numberWithUnsignedInteger: nppEncodingShiftJis()],
+		[NSNumber numberWithUnsignedInteger: nppEncodingGb18030()],
+		[NSNumber numberWithUnsignedInteger: nppEncodingBig5()],
+		[NSNumber numberWithUnsignedInteger: nppEncodingEucKr()],
+		nil];
+
+	NSStringEncoding bestEncoding = fallbackEncoding;
+	double bestScore = -1.0;
+	for (NSNumber *candidate in candidates) {
+		NSStringEncoding encoding = [candidate unsignedIntegerValue];
+		NSString *decoded = [[[NSString alloc] initWithData: data encoding: encoding] autorelease];
+		if (decoded == nil)
+			continue;
+
+		double score = [self printableRatioForString: decoded];
+		if ([decoded rangeOfString: @"\uFFFD"].location != NSNotFound)
+			score -= 0.15;
+		if (encoding == NSUTF8StringEncoding)
+			score += 0.02;
+
+		if (score > bestScore) {
+			bestScore = score;
+			bestEncoding = encoding;
+		}
+	}
+
+	if (bestScore < 0.60)
+		return fallbackEncoding;
+	return bestEncoding;
+}
+
+- (BOOL) isLikelyUtf8Data: (NSData *) data
+{
+	if (data == nil)
+		return NO;
+
+	const unsigned char *bytes = (const unsigned char *)[data bytes];
+	NSUInteger length = [data length];
+	NSUInteger i = 0;
+	while (i < length) {
+		unsigned char byte = bytes[i];
+		if (byte <= 0x7F) {
+			i++;
+			continue;
+		}
+
+		NSUInteger continuationLength = 0;
+		if ((byte & 0xE0) == 0xC0) {
+			if (byte < 0xC2)
+				return NO;
+			continuationLength = 1;
+		} else if ((byte & 0xF0) == 0xE0) {
+			continuationLength = 2;
+		} else if ((byte & 0xF8) == 0xF0) {
+			if (byte > 0xF4)
+				return NO;
+			continuationLength = 3;
+		} else {
+			return NO;
+		}
+
+		if (i + continuationLength >= length)
+			return NO;
+		for (NSUInteger j = 1; j <= continuationLength; ++j) {
+			if ((bytes[i + j] & 0xC0) != 0x80)
+				return NO;
+		}
+
+		i += continuationLength + 1;
+	}
+
+	return YES;
+}
+
+- (double) printableRatioForString: (NSString *) text
+{
+	if (text == nil || [text length] == 0)
+		return 1.0;
+
+	NSUInteger maxLength = MIN([text length], (NSUInteger)4096);
+	NSUInteger printable = 0;
+	for (NSUInteger i = 0; i < maxLength; ++i) {
+		unichar c = [text characterAtIndex: i];
+		BOOL isControl = [[NSCharacterSet controlCharacterSet] characterIsMember: c];
+		if (!isControl || c == '\n' || c == '\r' || c == '\t')
+			printable++;
+	}
+
+	return (double)printable / (double)maxLength;
+}
+
 //--------------------------------------------------------------------------------------------------
 
 - (IBAction) addRemoveExtra: (id) sender
 {
-	#pragma unused(sender)
-
-	if (sciExtra != nil) {
-		[sciExtra removeFromSuperview];
-		sciExtra = nil;
-		return;
-	}
-
-	if (mEditor == nil)
-		return;
-
-	NSRect frame = [mEditor frame];
-	frame.origin.x += frame.size.width + 6;
-	frame.size.width = 160;
-
-	sciExtra = [[[ScintillaView alloc] initWithFrame: frame] autorelease];
-	[[[mEditHost window] contentView] addSubview: sciExtra];
-	[sciExtra setGeneralProperty: SCI_SETWRAPMODE parameter: SC_WRAP_WORD value: 0];
-	[sciExtra setString: [mEditor string]];
+	[self toggleSplitScreen: sender];
 }
 
 - (IBAction) setFontQuality: (id) sender
@@ -3333,9 +4694,23 @@ willBeInsertedIntoToolbar: (BOOL) flag
 		action == @selector(toggleWhitespaceVisibility:) ||
 		action == @selector(toggleEolVisibility:) ||
 		action == @selector(toggleLineNumberMargin:) ||
+		action == @selector(toggleLiveTailCurrentFile:) ||
+		action == @selector(toggleSplitScreen:) ||
+		action == @selector(toggleDocumentMap:) ||
+		action == @selector(toggleAutosave:) ||
 		action == @selector(toggleSidebar:)) {
 		if (action == @selector(toggleSidebar:))
 			[menuItem setState: mSidebarVisible ? NSOnState : NSOffState];
+		if (action == @selector(toggleLiveTailCurrentFile:))
+			[menuItem setState: mLiveTailEnabled ? NSOnState : NSOffState];
+		if (action == @selector(toggleSplitScreen:))
+			[menuItem setState: mSplitViewEnabled ? NSOnState : NSOffState];
+		if (action == @selector(toggleDocumentMap:))
+			[menuItem setState: mDocumentMapVisible ? NSOnState : NSOffState];
+		if (action == @selector(toggleAutosave:))
+			[menuItem setState: mAutosaveEnabled ? NSOnState : NSOffState];
+		if (action == @selector(toggleLiveTailCurrentFile:))
+			return (document != nil);
 		return YES;
 	}
 
@@ -3364,12 +4739,26 @@ willBeInsertedIntoToolbar: (BOOL) flag
 		return (document != nil);
 
 	if (action == @selector(goToLine:) ||
+		action == @selector(compareCurrentWithFile:) ||
+		action == @selector(sortSelectedLinesAscending:) ||
+		action == @selector(sortSelectedLinesDescending:) ||
+		action == @selector(trimTrailingWhitespaceLines:) ||
+		action == @selector(convertSelectionToUpperCase:) ||
+		action == @selector(convertSelectionToLowerCase:) ||
+		action == @selector(convertSelectionToCamelCase:) ||
 		action == @selector(convertEolToWindows:) ||
 		action == @selector(convertEolToUnix:) ||
 		action == @selector(convertEolToMacClassic:) ||
 		action == @selector(setEncodingUtf8:) ||
 		action == @selector(setEncodingUtf16LE:) ||
-		action == @selector(setEncodingUtf16BE:)) {
+		action == @selector(setEncodingUtf16BE:) ||
+		action == @selector(setEncodingIso88591:) ||
+		action == @selector(setEncodingWindows1252:) ||
+		action == @selector(setEncodingWindows1251:) ||
+		action == @selector(setEncodingShiftJis:) ||
+		action == @selector(setEncodingGb18030:) ||
+		action == @selector(setEncodingBig5:) ||
+		action == @selector(setEncodingEucKr:)) {
 		return (document != nil);
 	}
 
@@ -3392,6 +4781,10 @@ willBeInsertedIntoToolbar: (BOOL) flag
 	NPPDocument *document = [self documentForTabItem: tabViewItem];
 	mEditor = document.editor;
 	[[mEditHost window] makeFirstResponder: mEditor];
+	if (mSplitViewEnabled || mDocumentMapVisible)
+		[self ensureExtraEditorForCurrentDocument];
+	else
+		[self removeExtraEditor];
 	[self updateWindowTitle];
 	[self refreshUiToggles];
 }

@@ -48,6 +48,7 @@
   NSTextField *mSearchFindField;
   NSTextField *mSearchReplaceField;
   NSTextField *mSearchFilterField;
+  NSTextField *mSearchFolderField;
   NSButton *mSearchMatchCase;
   NSButton *mSearchWholeWord;
   NSButton *mSearchRegex;
@@ -73,6 +74,15 @@
   BOOL mShowWhitespace;
   BOOL mShowEol;
   BOOL mShowLineNumbers;
+  BOOL mLiveTailEnabled;
+  NSString *mLiveTailPath;
+  unsigned long long mLiveTailKnownLength;
+  NSDate *mLiveTailLastModificationDate;
+  BOOL mSplitViewEnabled;
+  BOOL mDocumentMapVisible;
+  BOOL mAutosaveEnabled;
+  NSTimeInterval mNextAutosaveTime;
+  NSString *mComparedFilePath;
 
   BOOL mMacroRecording;
   NSMutableArray *mMacroSteps;
@@ -100,11 +110,24 @@
 - (IBAction) replaceText: (id) sender;
 - (IBAction) findInFiles: (id) sender;
 - (IBAction) goToLine: (id) sender;
+- (IBAction) browseSearchFolder: (id) sender;
 
 - (IBAction) toggleWordWrap: (id) sender;
 - (IBAction) toggleWhitespaceVisibility: (id) sender;
 - (IBAction) toggleEolVisibility: (id) sender;
 - (IBAction) toggleLineNumberMargin: (id) sender;
+- (IBAction) toggleLiveTailCurrentFile: (id) sender;
+- (IBAction) toggleSplitScreen: (id) sender;
+- (IBAction) toggleDocumentMap: (id) sender;
+- (IBAction) toggleAutosave: (id) sender;
+- (IBAction) compareCurrentWithFile: (id) sender;
+
+- (IBAction) sortSelectedLinesAscending: (id) sender;
+- (IBAction) sortSelectedLinesDescending: (id) sender;
+- (IBAction) trimTrailingWhitespaceLines: (id) sender;
+- (IBAction) convertSelectionToUpperCase: (id) sender;
+- (IBAction) convertSelectionToLowerCase: (id) sender;
+- (IBAction) convertSelectionToCamelCase: (id) sender;
 
 - (IBAction) convertEolToWindows: (id) sender;
 - (IBAction) convertEolToUnix: (id) sender;
@@ -113,6 +136,13 @@
 - (IBAction) setEncodingUtf8: (id) sender;
 - (IBAction) setEncodingUtf16LE: (id) sender;
 - (IBAction) setEncodingUtf16BE: (id) sender;
+- (IBAction) setEncodingIso88591: (id) sender;
+- (IBAction) setEncodingWindows1252: (id) sender;
+- (IBAction) setEncodingWindows1251: (id) sender;
+- (IBAction) setEncodingShiftJis: (id) sender;
+- (IBAction) setEncodingGb18030: (id) sender;
+- (IBAction) setEncodingBig5: (id) sender;
+- (IBAction) setEncodingEucKr: (id) sender;
 
 - (IBAction) toggleSidebar: (id) sender;
 - (IBAction) openProjectFolder: (id) sender;

@@ -5,49 +5,6 @@
 	<key>logFormatVersion</key>
 	<integer>12</integer>
 	<key>logs</key>
-	<dict>
-		<key>AD5FDD2A-21D8-468D-A4BC-4F4F01214F82</key>
-		<dict>
-			<key>className</key>
-			<string>IDECommandLineBuildLog</string>
-			<key>documentTypeString</key>
-			<string>&lt;nil&gt;</string>
-			<key>domainType</key>
-			<string>Xcode.IDEActivityLogDomainType.BuildLog</string>
-			<key>fileName</key>
-			<string>AD5FDD2A-21D8-468D-A4BC-4F4F01214F82.xcactivitylog</string>
-			<key>hasPrimaryLog</key>
-			<true/>
-			<key>primaryObservable</key>
-			<dict>
-				<key>highLevelStatus</key>
-				<string>E</string>
-				<key>totalNumberOfAnalyzerIssues</key>
-				<integer>0</integer>
-				<key>totalNumberOfErrors</key>
-				<integer>3</integer>
-				<key>totalNumberOfTestFailures</key>
-				<integer>0</integer>
-				<key>totalNumberOfWarnings</key>
-				<integer>0</integer>
-			</dict>
-			<key>schemeIdentifier-containerName</key>
-			<string>ScintillaTest project</string>
-			<key>schemeIdentifier-schemeName</key>
-			<string>ScintillaTest</string>
-			<key>schemeIdentifier-sharedScheme</key>
-			<integer>1</integer>
-			<key>signature</key>
-			<string>Building project ScintillaTest with scheme ScintillaTest and configuration Debug</string>
-			<key>timeStartedRecording</key>
-			<real>794862694.059461</real>
-			<key>timeStoppedRecording</key>
-			<real>794862709.79747701</real>
-			<key>title</key>
-			<string>Building project ScintillaTest with scheme ScintillaTest and configuration Debug</string>
-			<key>uniqueIdentifier</key>
-			<string>AD5FDD2A-21D8-468D-A4BC-4F4F01214F82</string>
-		</dict>
-	</dict>
+	<dict/>
 </dict>
 </plist>

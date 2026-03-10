@@ -40,6 +40,7 @@ xcodebuild \
   -configuration "$CONFIGURATION" \
   -arch "$ARCH" \
   -derivedDataPath "$DERIVED_DATA" \
+  OTHER_CPLUSPLUSFLAGS='$(inherited) -DLEXILLA_INCLUDE_MISSING_LEXERS=1' \
   CODE_SIGNING_ALLOWED=NO \
   build
 
@@ -49,6 +50,12 @@ if [[ ! -d "$APP_BUNDLE_PATH" ]]; then
 fi
 
 cp -R "$APP_BUNDLE_PATH" "$OUTPUT_APP"
+
+if command -v codesign >/dev/null 2>&1; then
+  # Re-sign the copied bundle to avoid invalid signature metadata after repackaging.
+  codesign --force --deep --sign - "$OUTPUT_APP" >/dev/null 2>&1 || true
+fi
+
 (
   cd "$BUILD_ROOT"
   ditto -c -k --sequesterRsrc --keepParent "$(basename "$OUTPUT_APP")" "$(basename "$OUTPUT_ZIP")"
