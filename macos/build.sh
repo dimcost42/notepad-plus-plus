@@ -11,8 +11,18 @@ ARCH="${ARCH:-arm64}"
 SCHEME="${SCHEME:-ScintillaTest}"
 APP_NAME="ScintillaTest.app"
 APP_BUNDLE_PATH="$DERIVED_DATA/Build/Products/${CONFIGURATION}/${APP_NAME}"
-OUTPUT_APP="$BUILD_ROOT/NotepadPlusPlus-mac-preview.app"
-OUTPUT_ZIP="$BUILD_ROOT/NotepadPlusPlus-mac-preview.zip"
+SIGN_IDENTITY="${SIGN_IDENTITY:--}"
+
+if [[ "${CONFIGURATION}" == "Release" ]]; then
+  DEFAULT_OUTPUT_APP="$BUILD_ROOT/Notepad++.app"
+  DEFAULT_OUTPUT_ZIP="$BUILD_ROOT/Notepad++-mac-production.zip"
+else
+  DEFAULT_OUTPUT_APP="$BUILD_ROOT/Notepad++-preview.app"
+  DEFAULT_OUTPUT_ZIP="$BUILD_ROOT/Notepad++-mac-preview.zip"
+fi
+
+OUTPUT_APP="${OUTPUT_APP:-$DEFAULT_OUTPUT_APP}"
+OUTPUT_ZIP="${OUTPUT_ZIP:-$DEFAULT_OUTPUT_ZIP}"
 
 if ! command -v xcodebuild >/dev/null 2>&1; then
   echo "error: xcodebuild not found. Install full Xcode first."
@@ -33,7 +43,7 @@ fi
 mkdir -p "$BUILD_ROOT"
 rm -rf "$DERIVED_DATA" "$OUTPUT_APP" "$OUTPUT_ZIP"
 
-echo "Building ScintillaTest (${CONFIGURATION}, ${ARCH})..."
+echo "Building Notepad++ (${CONFIGURATION}, ${ARCH})..."
 xcodebuild \
   -project "$PROJECT_FILE" \
   -scheme "$SCHEME" \
@@ -53,7 +63,11 @@ cp -R "$APP_BUNDLE_PATH" "$OUTPUT_APP"
 
 if command -v codesign >/dev/null 2>&1; then
   # Re-sign the copied bundle to avoid invalid signature metadata after repackaging.
-  codesign --force --deep --sign - "$OUTPUT_APP" >/dev/null 2>&1 || true
+  if [[ "$SIGN_IDENTITY" == "-" ]]; then
+    codesign --force --deep --sign - "$OUTPUT_APP" >/dev/null 2>&1 || true
+  else
+    codesign --force --deep --options runtime --timestamp --sign "$SIGN_IDENTITY" "$OUTPUT_APP"
+  fi
 fi
 
 (

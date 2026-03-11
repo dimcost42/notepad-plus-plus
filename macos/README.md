@@ -60,15 +60,19 @@ Or run the helper script from repo root:
 ./macos/build.sh
 ```
 
-Optional:
+Build script options:
 
 - override scheme: `SCHEME=ScintillaTest ./macos/build.sh`
-- release build: `CONFIGURATION=Release ./macos/build.sh`
+- release build (production): `CONFIGURATION=Release ./macos/build.sh`
+- dedicated production script: `./macos/build-production.sh`
+- signed production build: `SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./macos/build-production.sh`
 
 It produces:
 
-- `macos/build/NotepadPlusPlus-mac-preview.app`
-- `macos/build/NotepadPlusPlus-mac-preview.zip`
+- Debug app: `macos/build/Notepad++-preview.app`
+- Debug zip: `macos/build/Notepad++-mac-preview.zip`
+- Release app: `macos/build/Notepad++.app`
+- Release zip: `macos/build/Notepad++-mac-production.zip`
 
 ## Notes
 

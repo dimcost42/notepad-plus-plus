@@ -57,6 +57,7 @@ static NSString *const kNppMacPrefShowStatusBarKey = @"NPPMacPrefShowStatusBar";
 static NSString *const kNppMacPrefShowSidebarKey = @"NPPMacPrefShowSidebar";
 static NSString *const kNppMacPrefDefaultWordWrapKey = @"NPPMacPrefDefaultWordWrap";
 static NSString *const kNppMacPrefDefaultLineNumbersKey = @"NPPMacPrefDefaultLineNumbers";
+static NSString *const kNppMacPrefThemeModeKey = @"NPPMacPrefThemeMode";
 static NSString *const kNppMacMacroCompatibilityFolder = @"~/.nppmac";
 static NSString *const kNppMacMacroCompatibilityFile = @"shortcuts.xml";
 
@@ -66,6 +67,7 @@ static NSString *const kToolbarSaveID = @"npp.toolbar.save";
 static NSString *const kToolbarSearchID = @"npp.toolbar.search";
 static NSString *const kToolbarReplaceID = @"npp.toolbar.replace";
 static NSString *const kToolbarSidebarID = @"npp.toolbar.sidebar";
+static NSString *const kToolbarLiveTailID = @"npp.toolbar.livetail";
 static NSString *const kToolbarMacroRecordID = @"npp.toolbar.macrorecord";
 static NSString *const kToolbarMacroPlayID = @"npp.toolbar.macroplay";
 
@@ -97,8 +99,34 @@ static NSInteger const kMenuTagMacroSeparator = 9405;
 static NSInteger const kMenuTagMacroPlaceholder = 9406;
 static NSInteger const kMenuTagMacroDynamicBase = 9500;
 static NSInteger const kMenuTagAutosave = 9601;
+static NSInteger const kMenuTagThemeSystem = 9701;
+static NSInteger const kMenuTagThemeLight = 9702;
+static NSInteger const kMenuTagThemeDark = 9703;
 
 static NSTimeInterval const kNppMacAutosaveIntervalSeconds = 5.0;
+
+static NSColor *nppColorFromHex(NSString *hex)
+{
+	NSString *clean = [[hex stringByTrimmingCharactersInSet: [NSCharacterSet whitespaceAndNewlineCharacterSet]]
+		stringByReplacingOccurrencesOfString: @"#" withString: @""];
+	if ([clean length] != 6)
+		return [NSColor blackColor];
+
+	unsigned int value = 0;
+	NSScanner *scanner = [NSScanner scannerWithString: clean];
+	if (![scanner scanHexInt: &value])
+		return [NSColor blackColor];
+
+	CGFloat red = ((value >> 16) & 0xFF) / 255.0;
+	CGFloat green = ((value >> 8) & 0xFF) / 255.0;
+	CGFloat blue = (value & 0xFF) / 255.0;
+	return [NSColor colorWithCalibratedRed: red green: green blue: blue alpha: 1.0];
+}
+
+static NSColor *nppThemeColor(BOOL dark, NSString *darkHex, NSString *lightHex)
+{
+	return nppColorFromHex(dark ? darkHex : lightHex);
+}
 
 typedef void (*NppMacPluginInitFn)(void *context);
 typedef void (*NppMacPluginDeinitFn)(void *context);
@@ -237,6 +265,15 @@ static NSStringEncoding nppEncodingEucKr()
 - (void) loadMacrosFromCompatibilityFile;
 - (void) saveMacrosToCompatibilityFile;
 - (void) updateMacroMenuState;
+- (void) syncTabCloseButtons;
+- (IBAction) closeDocumentFromTabButton: (id) sender;
+- (void) applyNotepadPlusPlusStyleForLexerName: (NSString *) lexerName editor: (ScintillaView *) editor dark: (BOOL) dark;
+- (BOOL) isEffectiveDarkAppearance;
+- (BOOL) shouldUseDarkTheme;
+- (void) applyThemeToChrome;
+- (void) applyThemeToAllEditors;
+- (void) applyThemeMode: (NSInteger) mode persist: (BOOL) persist;
+- (void) applyCurrentThemeIfNeeded;
 
 - (NSString *) promptForStringWithTitle: (NSString *) title
 									message: (NSString *) message
@@ -276,6 +313,7 @@ static NSStringEncoding nppEncodingEucKr()
 	[mStateTimer invalidate];
 	[mStateTimer release];
 	[mLastSearch release];
+	[mTabCloseButtons release];
 	[mDocuments release];
 	[mFunctionEntries release];
 	[mProjectEntries release];
@@ -287,6 +325,7 @@ static NSStringEncoding nppEncodingEucKr()
 	[mSearchPanel release];
 	[mPreferencesWindow release];
 	[mMainToolbar release];
+	[mLiveTailToolbarButton release];
 	[mLiveTailPath release];
 	[mLiveTailLastModificationDate release];
 	[mComparedFilePath release];
@@ -300,6 +339,7 @@ static NSStringEncoding nppEncodingEucKr()
 - (void) awakeFromNib
 {
 	mDocuments = [[NSMutableArray alloc] init];
+	mTabCloseButtons = [[NSMutableDictionary alloc] init];
 	mFunctionEntries = [[NSMutableArray alloc] init];
 	mProjectEntries = [[NSMutableArray alloc] init];
 	mProjectRootPaths = [[NSMutableArray alloc] init];
@@ -318,14 +358,23 @@ static NSStringEncoding nppEncodingEucKr()
 	NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
 	BOOL prefDefaultWordWrap = [defaults objectForKey: kNppMacPrefDefaultWordWrapKey] ? [defaults boolForKey: kNppMacPrefDefaultWordWrapKey] : NO;
 	BOOL prefDefaultLineNumbers = [defaults objectForKey: kNppMacPrefDefaultLineNumbersKey] ? [defaults boolForKey: kNppMacPrefDefaultLineNumbersKey] : YES;
+	NSNumber *prefThemeMode = [defaults objectForKey: kNppMacPrefThemeModeKey];
 	mWordWrap = prefDefaultWordWrap;
 	mShowWhitespace = NO;
 	mShowEol = NO;
 	mShowLineNumbers = prefDefaultLineNumbers;
+	mThemeMode = (prefThemeMode != nil) ? [prefThemeMode integerValue] : 0;
+	if (mThemeMode < 0 || mThemeMode > 2)
+		mThemeMode = 0;
+	mCurrentThemeDark = (mThemeMode == 2) ? YES : NO;
+	if (mThemeMode == 0)
+		mCurrentThemeDark = [self isEffectiveDarkAppearance];
 	mLiveTailEnabled = NO;
 	mLiveTailPath = nil;
 	mLiveTailKnownLength = 0;
 	mLiveTailLastModificationDate = nil;
+	mRefreshingLiveTail = NO;
+	mRefreshingEditorState = NO;
 	mSplitViewEnabled = NO;
 	mDocumentMapVisible = NO;
 	mAutosaveEnabled = YES;
@@ -335,12 +384,14 @@ static NSStringEncoding nppEncodingEucKr()
 	mSidebarVisible = [defaults objectForKey: kNppMacPrefShowSidebarKey] ? [defaults boolForKey: kNppMacPrefShowSidebarKey] : YES;
 	mStatusBarVisible = [defaults objectForKey: kNppMacPrefShowStatusBarKey] ? [defaults boolForKey: kNppMacPrefShowStatusBarKey] : YES;
 
+	[[NSProcessInfo processInfo] setProcessName: @"Notepad++"];
 	[NSApp setDelegate: self];
 
 	[self configureTabHost];
 	[self wireMenuActions];
 	[self wireRuntimeFeatureMenus];
 	[self setupToolbar];
+	[self applyThemeMode: mThemeMode persist: NO];
 	[self setupPluginsMenu];
 	[self loadLexilla];
 	[self loadMacrosFromCompatibilityFile];
@@ -367,7 +418,20 @@ static NSStringEncoding nppEncodingEucKr()
 
 - (void) configureTabHost
 {
+	BOOL dark = mCurrentThemeDark;
+	NSWindow *window = [mEditHost window];
+	if (window != nil) {
+		if (mThemeMode == 0)
+			[window setAppearance: nil];
+		else
+			[window setAppearance: [NSAppearance appearanceNamed: dark ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua]];
+		[window setBackgroundColor: nppThemeColor(dark, @"#1E1E1E", @"#F2F2F2")];
+	}
+
 	NSView *contentView = [mEditHost contentView];
+	[contentView setWantsLayer: YES];
+	[[contentView layer] setBackgroundColor: [nppThemeColor(dark, @"#1E1E1E", @"#F2F2F2") CGColor]];
+
 	NSArray *existingSubviews = [[contentView subviews] copy];
 	for (NSView *subview in existingSubviews) {
 		[subview removeFromSuperview];
@@ -386,7 +450,10 @@ static NSStringEncoding nppEncodingEucKr()
 	[contentView addSubview: mWorkspaceSplitView];
 
 	NSView *sidebarContainer = [[[NSView alloc] initWithFrame: NSMakeRect(0, 0, 260, splitFrame.size.height)] autorelease];
+	mSidebarContainer = sidebarContainer;
 	[sidebarContainer setAutoresizingMask: NSViewHeightSizable];
+	[sidebarContainer setWantsLayer: YES];
+	[[sidebarContainer layer] setBackgroundColor: [nppThemeColor(dark, @"#252526", @"#F4F4F4") CGColor]];
 	[mWorkspaceSplitView addSubview: sidebarContainer];
 
 	mSidebarTabView = [[[NSTabView alloc] initWithFrame: [sidebarContainer bounds]] autorelease];
@@ -394,14 +461,22 @@ static NSStringEncoding nppEncodingEucKr()
 	[sidebarContainer addSubview: mSidebarTabView];
 
 	NSScrollView *projectScroll = [[[NSScrollView alloc] initWithFrame: [sidebarContainer bounds]] autorelease];
+	mProjectScrollView = projectScroll;
 	[projectScroll setHasVerticalScroller: YES];
 	[projectScroll setAutoresizingMask: NSViewWidthSizable | NSViewHeightSizable];
+	[projectScroll setDrawsBackground: YES];
+	[projectScroll setBackgroundColor: nppThemeColor(dark, @"#252526", @"#F4F4F4")];
 	mProjectTableView = [[[NSTableView alloc] initWithFrame: [projectScroll bounds]] autorelease];
 	NSTableColumn *projectColumn = [[[NSTableColumn alloc] initWithIdentifier: @"project"] autorelease];
 	[projectColumn setTitle: @"Project"];
 	[projectColumn setWidth: 240];
+	[[projectColumn dataCell] setFont: [NSFont systemFontOfSize: 12]];
+	[[projectColumn dataCell] setTextColor: nppColorFromHex(@"#D4D4D4")];
 	[mProjectTableView addTableColumn: projectColumn];
 	[mProjectTableView setHeaderView: nil];
+	[mProjectTableView setBackgroundColor: nppColorFromHex(@"#252526")];
+	[mProjectTableView setGridColor: nppColorFromHex(@"#2F2F2F")];
+	[mProjectTableView setUsesAlternatingRowBackgroundColors: NO];
 	[mProjectTableView setDataSource: self];
 	[mProjectTableView setDelegate: self];
 	[mProjectTableView setTarget: self];
@@ -414,14 +489,22 @@ static NSStringEncoding nppEncodingEucKr()
 	[mSidebarTabView addTabViewItem: projectTab];
 
 	NSScrollView *functionScroll = [[[NSScrollView alloc] initWithFrame: [sidebarContainer bounds]] autorelease];
+	mFunctionScrollView = functionScroll;
 	[functionScroll setHasVerticalScroller: YES];
 	[functionScroll setAutoresizingMask: NSViewWidthSizable | NSViewHeightSizable];
+	[functionScroll setDrawsBackground: YES];
+	[functionScroll setBackgroundColor: nppThemeColor(dark, @"#252526", @"#F4F4F4")];
 	mFunctionTableView = [[[NSTableView alloc] initWithFrame: [functionScroll bounds]] autorelease];
 	NSTableColumn *functionColumn = [[[NSTableColumn alloc] initWithIdentifier: @"function"] autorelease];
 	[functionColumn setTitle: @"Function"];
 	[functionColumn setWidth: 240];
+	[[functionColumn dataCell] setFont: [NSFont systemFontOfSize: 12]];
+	[[functionColumn dataCell] setTextColor: nppColorFromHex(@"#D4D4D4")];
 	[mFunctionTableView addTableColumn: functionColumn];
 	[mFunctionTableView setHeaderView: nil];
+	[mFunctionTableView setBackgroundColor: nppColorFromHex(@"#252526")];
+	[mFunctionTableView setGridColor: nppColorFromHex(@"#2F2F2F")];
+	[mFunctionTableView setUsesAlternatingRowBackgroundColors: NO];
 	[mFunctionTableView setDataSource: self];
 	[mFunctionTableView setDelegate: self];
 	[mFunctionTableView setTarget: self];
@@ -435,6 +518,8 @@ static NSStringEncoding nppEncodingEucKr()
 
 	mEditorHost = [[[NSView alloc] initWithFrame: NSMakeRect(260, 0, splitFrame.size.width - 260, splitFrame.size.height)] autorelease];
 	[mEditorHost setAutoresizingMask: NSViewWidthSizable | NSViewHeightSizable];
+	[mEditorHost setWantsLayer: YES];
+	[[mEditorHost layer] setBackgroundColor: [nppThemeColor(dark, @"#1E1E1E", @"#FFFFFF") CGColor]];
 	[mWorkspaceSplitView addSubview: mEditorHost];
 
 	[mWorkspaceSplitView adjustSubviews];
@@ -459,13 +544,14 @@ static NSStringEncoding nppEncodingEucKr()
 	mSearchResultContainer = [[[NSView alloc] initWithFrame: NSMakeRect(0, 0, [mEditorHost bounds].size.width, resultsHeight)] autorelease];
 	[mSearchResultContainer setAutoresizingMask: NSViewWidthSizable | NSViewHeightSizable];
 	[mSearchResultContainer setWantsLayer: YES];
-	[[mSearchResultContainer layer] setBackgroundColor: [[NSColor colorWithCalibratedWhite: 0.975 alpha: 1.0] CGColor]];
+	[[mSearchResultContainer layer] setBackgroundColor: [nppThemeColor(dark, @"#1E1E1E", @"#FFFFFF") CGColor]];
 	[mEditorSplitView addSubview: mSearchResultContainer];
 
 	NSView *resultsHeader = [[[NSView alloc] initWithFrame: NSMakeRect(0, resultsHeight - 30, [mSearchResultContainer bounds].size.width, 30)] autorelease];
+	mSearchResultsHeaderView = resultsHeader;
 	[resultsHeader setAutoresizingMask: NSViewWidthSizable | NSViewMinYMargin];
 	[resultsHeader setWantsLayer: YES];
-	[[resultsHeader layer] setBackgroundColor: [[NSColor colorWithCalibratedWhite: 0.94 alpha: 1.0] CGColor]];
+	[[resultsHeader layer] setBackgroundColor: [nppThemeColor(dark, @"#2D2D30", @"#ECECEC") CGColor]];
 	[mSearchResultContainer addSubview: resultsHeader];
 
 	mSearchResultsSummaryLabel = [[[NSTextField alloc] initWithFrame: NSMakeRect(12, 6, [resultsHeader bounds].size.width - 54, 18)] autorelease];
@@ -474,30 +560,36 @@ static NSStringEncoding nppEncodingEucKr()
 	[mSearchResultsSummaryLabel setBordered: NO];
 	[mSearchResultsSummaryLabel setDrawsBackground: NO];
 	[mSearchResultsSummaryLabel setFont: [NSFont systemFontOfSize: 12]];
-	[mSearchResultsSummaryLabel setTextColor: [NSColor secondaryLabelColor]];
+	[mSearchResultsSummaryLabel setTextColor: nppColorFromHex(@"#D4D4D4")];
 	[mSearchResultsSummaryLabel setStringValue: @"Search Results"];
 	[resultsHeader addSubview: mSearchResultsSummaryLabel];
 
 	NSButton *closeResultsButton = [[[NSButton alloc] initWithFrame: NSMakeRect([resultsHeader bounds].size.width - 30, 5, 22, 20)] autorelease];
+	mSearchResultsCloseButton = closeResultsButton;
 	[closeResultsButton setAutoresizingMask: NSViewMinXMargin];
-	[closeResultsButton setBezelStyle: NSBezelStyleRoundRect];
-	[closeResultsButton setTitle: @"x"];
+	[closeResultsButton setBezelStyle: NSBezelStyleTexturedRounded];
+	[closeResultsButton setTitle: @"×"];
 	[closeResultsButton setTarget: self];
 	[closeResultsButton setAction: @selector(closeSearchResultsPanel:)];
 	[resultsHeader addSubview: closeResultsButton];
 
 	NSScrollView *resultsScroll = [[[NSScrollView alloc] initWithFrame: NSMakeRect(0, 0, [mSearchResultContainer bounds].size.width, [mSearchResultContainer bounds].size.height - 30)] autorelease];
+	mSearchResultsScrollView = resultsScroll;
 	[resultsScroll setAutoresizingMask: NSViewWidthSizable | NSViewHeightSizable];
 	[resultsScroll setHasVerticalScroller: YES];
 	[resultsScroll setHasHorizontalScroller: YES];
+	[resultsScroll setDrawsBackground: YES];
+	[resultsScroll setBackgroundColor: nppColorFromHex(@"#1E1E1E")];
 	[mSearchResultContainer addSubview: resultsScroll];
 
 	mSearchResultsTableView = [[[NSTableView alloc] initWithFrame: [resultsScroll bounds]] autorelease];
 	[mSearchResultsTableView setAutoresizingMask: NSViewWidthSizable | NSViewHeightSizable];
-	[mSearchResultsTableView setUsesAlternatingRowBackgroundColors: YES];
+	[mSearchResultsTableView setUsesAlternatingRowBackgroundColors: NO];
 	[mSearchResultsTableView setAllowsColumnReordering: YES];
 	[mSearchResultsTableView setAllowsColumnResizing: YES];
 	[mSearchResultsTableView setGridStyleMask: NSTableViewSolidHorizontalGridLineMask];
+	[mSearchResultsTableView setGridColor: nppColorFromHex(@"#2F2F2F")];
+	[mSearchResultsTableView setBackgroundColor: nppColorFromHex(@"#1E1E1E")];
 	[mSearchResultsTableView setRowHeight: 22.0];
 	[mSearchResultsTableView setIntercellSpacing: NSMakeSize(4, 2)];
 	[mSearchResultsTableView setDataSource: self];
@@ -510,15 +602,17 @@ static NSStringEncoding nppEncodingEucKr()
 	[resultFileColumn setTitle: @"File"];
 	[resultFileColumn setWidth: 250];
 	[[resultFileColumn dataCell] setFont: [NSFont systemFontOfSize: 12]];
+	[[resultFileColumn dataCell] setTextColor: nppColorFromHex(@"#DCDCAA")];
 	[resultFileColumn setSortDescriptorPrototype: [[[NSSortDescriptor alloc] initWithKey: @"sortFile"
-																				ascending: YES
-																				 selector: @selector(localizedCaseInsensitiveCompare:)] autorelease]];
+																					ascending: YES
+																					 selector: @selector(localizedCaseInsensitiveCompare:)] autorelease]];
 	[mSearchResultsTableView addTableColumn: resultFileColumn];
 
 	NSTableColumn *resultLineColumn = [[[NSTableColumn alloc] initWithIdentifier: @"resultLine"] autorelease];
 	[resultLineColumn setTitle: @"Line"];
 	[resultLineColumn setWidth: 76];
 	[[resultLineColumn dataCell] setFont: [NSFont systemFontOfSize: 12]];
+	[[resultLineColumn dataCell] setTextColor: nppColorFromHex(@"#9CDCFE")];
 	[resultLineColumn setSortDescriptorPrototype: [[[NSSortDescriptor alloc] initWithKey: @"line" ascending: YES] autorelease]];
 	[mSearchResultsTableView addTableColumn: resultLineColumn];
 
@@ -526,9 +620,10 @@ static NSStringEncoding nppEncodingEucKr()
 	[resultSnippetColumn setTitle: @"Text"];
 	[resultSnippetColumn setWidth: 560];
 	[[resultSnippetColumn dataCell] setFont: [NSFont fontWithName: @"Menlo" size: 12]];
+	[[resultSnippetColumn dataCell] setTextColor: nppColorFromHex(@"#D4D4D4")];
 	[resultSnippetColumn setSortDescriptorPrototype: [[[NSSortDescriptor alloc] initWithKey: @"snippet"
-																				  ascending: YES
-																				   selector: @selector(localizedCaseInsensitiveCompare:)] autorelease]];
+																					  ascending: YES
+																					   selector: @selector(localizedCaseInsensitiveCompare:)] autorelease]];
 	[mSearchResultsTableView addTableColumn: resultSnippetColumn];
 
 	[resultsScroll setDocumentView: mSearchResultsTableView];
@@ -546,9 +641,10 @@ static NSStringEncoding nppEncodingEucKr()
 	[mStatusBar setEditable: NO];
 	[mStatusBar setBordered: NO];
 	[mStatusBar setDrawsBackground: YES];
-	[mStatusBar setBackgroundColor: [NSColor colorWithCalibratedWhite: 0.95 alpha: 1.0]];
+	[mStatusBar setBackgroundColor: nppColorFromHex(@"#1A1A1A")];
+	[mStatusBar setTextColor: nppColorFromHex(@"#D4D4D4")];
 	[mStatusBar setAutoresizingMask: NSViewWidthSizable | NSViewMaxYMargin];
-	[mStatusBar setFont: [NSFont systemFontOfSize: 11]];
+	[mStatusBar setFont: [NSFont fontWithName: @"Menlo" size: 11]];
 	[mStatusBar setHidden: !mStatusBarVisible];
 	[mStatusBar setStringValue: @"Ready"];
 	[contentView addSubview: mStatusBar];
@@ -586,6 +682,7 @@ static NSStringEncoding nppEncodingEucKr()
 		kToolbarSearchID,
 		kToolbarReplaceID,
 		kToolbarSidebarID,
+		kToolbarLiveTailID,
 		NSToolbarFlexibleSpaceItemIdentifier,
 		kToolbarMacroRecordID,
 		kToolbarMacroPlayID,
@@ -605,6 +702,7 @@ static NSStringEncoding nppEncodingEucKr()
 		kToolbarSearchID,
 		kToolbarReplaceID,
 		kToolbarSidebarID,
+		kToolbarLiveTailID,
 		NSToolbarFlexibleSpaceItemIdentifier,
 		kToolbarMacroRecordID,
 		kToolbarMacroPlayID,
@@ -656,6 +754,21 @@ willBeInsertedIntoToolbar: (BOOL) flag
 		[item setImage: [NSImage imageNamed: NSImageNameListViewTemplate]];
 		[item setTarget: self];
 		[item setAction: @selector(toggleSidebar:)];
+	} else if ([itemIdentifier isEqualToString: kToolbarLiveTailID]) {
+		[item setLabel: @"Live Tail"];
+		[item setPaletteLabel: @"Live Tail"];
+		NSButton *toggle = [[[NSButton alloc] initWithFrame: NSMakeRect(0, 0, 98, 28)] autorelease];
+		[toggle setButtonType: NSToggleButton];
+		[toggle setBezelStyle: NSBezelStyleTexturedRounded];
+		[toggle setTitle: @"Live Tail"];
+		[toggle setTarget: self];
+		[toggle setAction: @selector(toggleLiveTailCurrentFile:)];
+		[toggle setState: mLiveTailEnabled ? NSOnState : NSOffState];
+		[item setView: toggle];
+		[item setMinSize: NSMakeSize(90, 28)];
+		[item setMaxSize: NSMakeSize(120, 32)];
+		[mLiveTailToolbarButton release];
+		mLiveTailToolbarButton = [toggle retain];
 	} else if ([itemIdentifier isEqualToString: kToolbarMacroRecordID]) {
 		[item setLabel: @"Record"];
 		[item setPaletteLabel: @"Record Macro"];
@@ -873,6 +986,47 @@ willBeInsertedIntoToolbar: (BOOL) flag
 			[documentMapItem setTarget: self];
 			[documentMapItem setTag: kMenuTagDocumentMap];
 			[viewMenu addItem: documentMapItem];
+		}
+
+		NSMenuItem *themeMenuItem = [viewMenu itemWithTitle: @"Theme"];
+		NSMenu *themeMenu = nil;
+		if (themeMenuItem == nil) {
+			[viewMenu addItem: [NSMenuItem separatorItem]];
+			themeMenuItem = [[[NSMenuItem alloc] initWithTitle: @"Theme" action: nil keyEquivalent: @""] autorelease];
+			themeMenu = [[[NSMenu alloc] initWithTitle: @"Theme"] autorelease];
+			[themeMenuItem setSubmenu: themeMenu];
+			[viewMenu addItem: themeMenuItem];
+		} else {
+			themeMenu = [themeMenuItem submenu];
+			if (themeMenu == nil) {
+				themeMenu = [[[NSMenu alloc] initWithTitle: @"Theme"] autorelease];
+				[themeMenuItem setSubmenu: themeMenu];
+			}
+		}
+
+		if ([themeMenu itemWithTag: kMenuTagThemeSystem] == nil) {
+			NSMenuItem *themeSystem = [[[NSMenuItem alloc] initWithTitle: @"System"
+																	action: @selector(setThemeSystem:)
+															 keyEquivalent: @""] autorelease];
+			[themeSystem setTarget: self];
+			[themeSystem setTag: kMenuTagThemeSystem];
+			[themeMenu addItem: themeSystem];
+		}
+		if ([themeMenu itemWithTag: kMenuTagThemeLight] == nil) {
+			NSMenuItem *themeLight = [[[NSMenuItem alloc] initWithTitle: @"Light"
+																   action: @selector(setThemeLight:)
+															keyEquivalent: @""] autorelease];
+			[themeLight setTarget: self];
+			[themeLight setTag: kMenuTagThemeLight];
+			[themeMenu addItem: themeLight];
+		}
+		if ([themeMenu itemWithTag: kMenuTagThemeDark] == nil) {
+			NSMenuItem *themeDark = [[[NSMenuItem alloc] initWithTitle: @"Dark"
+																  action: @selector(setThemeDark:)
+														   keyEquivalent: @""] autorelease];
+			[themeDark setTarget: self];
+			[themeDark setTag: kMenuTagThemeDark];
+			[themeMenu addItem: themeDark];
 		}
 	}
 
@@ -1309,7 +1463,7 @@ willBeInsertedIntoToolbar: (BOOL) flag
 	if (document.filePath != nil)
 		baseName = [document.filePath lastPathComponent];
 	else
-		baseName = [NSString stringWithFormat: @"Untitled %lu", (unsigned long)document.untitledIndex];
+		baseName = [NSString stringWithFormat: @"new %lu", (unsigned long)document.untitledIndex];
 
 	return document.dirty ? [@"*" stringByAppendingString: baseName] : baseName;
 }
@@ -1317,31 +1471,125 @@ willBeInsertedIntoToolbar: (BOOL) flag
 - (void) updateDocumentTabs
 {
 	for (NPPDocument *document in mDocuments)
-		[document.tabItem setLabel: [self titleForDocument: document]];
+		[document.tabItem setLabel: [[self titleForDocument: document] stringByAppendingString: @"  "]];
+
+	[self syncTabCloseButtons];
+}
+
+- (void) syncTabCloseButtons
+{
+	if (mTabView == nil)
+		return;
+
+	NSRect bounds = [mTabView bounds];
+	NSRect contentRect = [mTabView contentRect];
+	CGFloat tabStripHeight = NSMaxY(bounds) - NSMaxY(contentRect);
+	if ([mDocuments count] == 0 || tabStripHeight <= 2.0) {
+		for (NSButton *button in [mTabCloseButtons allValues])
+			[button setHidden: YES];
+		return;
+	}
+
+	CGFloat probeY = NSMaxY(contentRect) + floor(tabStripHeight * 0.5);
+	NSMutableDictionary *minByTab = [NSMutableDictionary dictionary];
+	NSMutableDictionary *maxByTab = [NSMutableDictionary dictionary];
+	for (CGFloat x = floor(NSMinX(bounds)) + 1.0; x <= ceil(NSMaxX(bounds)) - 1.0; x += 1.0) {
+		NSTabViewItem *hitItem = [mTabView tabViewItemAtPoint: NSMakePoint(x, probeY)];
+		if (hitItem == nil)
+			continue;
+		NSValue *tabKey = [NSValue valueWithNonretainedObject: hitItem];
+		if ([minByTab objectForKey: tabKey] == nil)
+			[minByTab setObject: [NSNumber numberWithDouble: x] forKey: tabKey];
+		[maxByTab setObject: [NSNumber numberWithDouble: x] forKey: tabKey];
+	}
+
+	NSMutableSet *documentKeys = [NSMutableSet set];
+	for (NPPDocument *document in mDocuments) {
+		NSTabViewItem *tabItem = document.tabItem;
+		if (tabItem == nil)
+			continue;
+
+		NSValue *tabKey = [NSValue valueWithNonretainedObject: tabItem];
+		[documentKeys addObject: tabKey];
+		NSNumber *minXNum = [minByTab objectForKey: tabKey];
+		NSNumber *maxXNum = [maxByTab objectForKey: tabKey];
+
+		NSButton *closeButton = [mTabCloseButtons objectForKey: tabKey];
+		if (closeButton == nil) {
+			closeButton = [[[NSButton alloc] initWithFrame: NSMakeRect(0, 0, 13, 13)] autorelease];
+			[closeButton setTitle: @"x"];
+			[closeButton setFont: [NSFont boldSystemFontOfSize: 9.5]];
+			[closeButton setBordered: NO];
+			[closeButton setButtonType: NSMomentaryPushInButton];
+			[closeButton setFocusRingType: NSFocusRingTypeNone];
+			[closeButton setToolTip: @"Close Tab"];
+			[closeButton setTarget: self];
+			[closeButton setAction: @selector(closeDocumentFromTabButton:)];
+			[mTabCloseButtons setObject: closeButton forKey: tabKey];
+			[mTabView addSubview: closeButton];
+		}
+
+		if (minXNum == nil || maxXNum == nil) {
+			[closeButton setHidden: YES];
+			continue;
+		}
+
+		CGFloat minX = [minXNum doubleValue];
+		CGFloat maxX = [maxXNum doubleValue];
+		CGFloat buttonSize = 13.0;
+		NSString *tabTitle = [self titleForDocument: document];
+		NSDictionary *titleAttributes = [NSDictionary dictionaryWithObject: [NSFont systemFontOfSize: [NSFont systemFontSizeForControlSize: NSControlSizeRegular]]
+																	forKey: NSFontAttributeName];
+		CGFloat titleWidth = ceil([tabTitle sizeWithAttributes: titleAttributes].width);
+		CGFloat tabTitleStartX = minX + 14.0;
+		CGFloat preferredButtonX = tabTitleStartX + titleWidth + 3.0;
+		CGFloat minButtonX = minX + 4.0;
+		CGFloat maxButtonX = maxX - buttonSize - 4.0;
+		CGFloat buttonX = MIN(MAX(preferredButtonX, minButtonX), maxButtonX);
+		CGFloat buttonY = probeY - floor(buttonSize * 0.5);
+		[closeButton setFrame: NSMakeRect(buttonX, buttonY, buttonSize, buttonSize)];
+		[closeButton setHidden: NO];
+		[mTabView addSubview: closeButton positioned: NSWindowAbove relativeTo: nil];
+	}
+
+	NSArray *existingKeys = [[mTabCloseButtons allKeys] copy];
+	for (NSValue *tabKey in existingKeys) {
+		if ([documentKeys containsObject: tabKey])
+			continue;
+		NSButton *button = [mTabCloseButtons objectForKey: tabKey];
+		[button removeFromSuperview];
+		[mTabCloseButtons removeObjectForKey: tabKey];
+	}
+	[existingKeys release];
+}
+
+- (IBAction) closeDocumentFromTabButton: (id) sender
+{
+	for (NSValue *tabKey in mTabCloseButtons) {
+		NSButton *button = [mTabCloseButtons objectForKey: tabKey];
+		if (button != sender)
+			continue;
+		NSTabViewItem *tabItem = [tabKey nonretainedObjectValue];
+		NPPDocument *document = [self documentForTabItem: tabItem];
+		if (document != nil) {
+			[self selectDocument: document];
+			[self performClose: nil];
+		}
+		return;
+	}
 }
 
 - (void) updateWindowTitle
 {
 	NPPDocument *document = [self currentDocument];
 	if (document == nil) {
-		[[mEditHost window] setTitle: @"Notepad++ macOS Preview"];
+		[[mEditHost window] setTitle: @"Notepad++"];
 		[self updateStatusBar];
 		return;
 	}
 
-	long currentPos = [document.editor getGeneralProperty: SCI_GETCURRENTPOS parameter: 0];
-	long line = [document.editor getGeneralProperty: SCI_LINEFROMPOSITION parameter: currentPos] + 1;
-	long column = [document.editor getGeneralProperty: SCI_GETCOLUMN parameter: currentPos] + 1;
-	NSInteger eolMode = [self currentEolModeForDocument: document];
-	NSString *eolLabel = (eolMode == SC_EOL_CRLF) ? @"CRLF" : ((eolMode == SC_EOL_LF) ? @"LF" : @"CR");
-	NSString *encodingLabel = [self encodingLabelForDocument: document];
-	NSString *title = [NSString stringWithFormat: @"%@ - Ln %ld, Col %ld [%@ | %@]",
-											 [self titleForDocument: document],
-											 line,
-											 column,
-											 encodingLabel,
-											 eolLabel];
-	[[mEditHost window] setTitle: title];
+	NSString *titleText = ([document.filePath length] > 0) ? document.filePath : [self titleForDocument: document];
+	[[mEditHost window] setTitle: [NSString stringWithFormat: @"%@ - Notepad++", titleText]];
 	[self updateStatusBar];
 }
 
@@ -1384,20 +1632,29 @@ willBeInsertedIntoToolbar: (BOOL) flag
 - (void) refreshEditorState: (NSTimer *) timer
 {
 	#pragma unused(timer)
+	if (mRefreshingEditorState)
+		return;
 
-	for (NPPDocument *document in mDocuments) {
-		BOOL isDirty = ([document.editor getGeneralProperty: SCI_GETMODIFY parameter: 0] != 0) || document.metadataDirty;
-		if (document.dirty != isDirty)
-			document.dirty = isDirty;
+	mRefreshingEditorState = YES;
+	@try {
+		[self applyCurrentThemeIfNeeded];
+
+		for (NPPDocument *document in mDocuments) {
+			BOOL isDirty = ([document.editor getGeneralProperty: SCI_GETMODIFY parameter: 0] != 0) || document.metadataDirty;
+			if (document.dirty != isDirty)
+				document.dirty = isDirty;
+		}
+
+		[self runAutosaveIfNeeded];
+		[self refreshLiveTail];
+		[self refreshExtraEditorState];
+		[self updateDocumentTabs];
+		[self updateWindowTitle];
+		[self refreshUiToggles];
+		[self refreshFunctionList];
+	} @finally {
+		mRefreshingEditorState = NO;
 	}
-
-	[self runAutosaveIfNeeded];
-	[self refreshLiveTail];
-	[self refreshExtraEditorState];
-	[self updateDocumentTabs];
-	[self updateWindowTitle];
-	[self refreshUiToggles];
-	[self refreshFunctionList];
 }
 
 - (void) refreshUiToggles
@@ -1414,6 +1671,9 @@ willBeInsertedIntoToolbar: (BOOL) flag
 	NSMenuItem *splitItem = [mainMenu itemWithTag: kMenuTagSplitScreen];
 	NSMenuItem *documentMapItem = [mainMenu itemWithTag: kMenuTagDocumentMap];
 	NSMenuItem *autosaveItem = [mainMenu itemWithTag: kMenuTagAutosave];
+	NSMenuItem *themeSystemItem = [mainMenu itemWithTag: kMenuTagThemeSystem];
+	NSMenuItem *themeLightItem = [mainMenu itemWithTag: kMenuTagThemeLight];
+	NSMenuItem *themeDarkItem = [mainMenu itemWithTag: kMenuTagThemeDark];
 	NSMenuItem *viewMenuItem = [mainMenu itemWithTitle: @"View"];
 	NSMenuItem *sidebarItem = [[viewMenuItem submenu] itemWithTitle: @"Toggle Sidebar"];
 
@@ -1426,6 +1686,11 @@ willBeInsertedIntoToolbar: (BOOL) flag
 	[splitItem setState: mSplitViewEnabled ? NSOnState : NSOffState];
 	[documentMapItem setState: mDocumentMapVisible ? NSOnState : NSOffState];
 	[autosaveItem setState: mAutosaveEnabled ? NSOnState : NSOffState];
+	[themeSystemItem setState: (mThemeMode == 0) ? NSOnState : NSOffState];
+	[themeLightItem setState: (mThemeMode == 1) ? NSOnState : NSOffState];
+	[themeDarkItem setState: (mThemeMode == 2) ? NSOnState : NSOffState];
+	if (mLiveTailToolbarButton != nil)
+		[mLiveTailToolbarButton setState: mLiveTailEnabled ? NSOnState : NSOffState];
 
 	NPPDocument *document = [self currentDocument];
 	if (document == nil)
@@ -1447,6 +1712,195 @@ willBeInsertedIntoToolbar: (BOOL) flag
 	[[mainMenu itemWithTag: kMenuTagEncodingGb18030] setState: (encoding == nppEncodingGb18030()) ? NSOnState : NSOffState];
 	[[mainMenu itemWithTag: kMenuTagEncodingBig5] setState: (encoding == nppEncodingBig5()) ? NSOnState : NSOffState];
 	[[mainMenu itemWithTag: kMenuTagEncodingEucKr] setState: (encoding == nppEncodingEucKr()) ? NSOnState : NSOffState];
+}
+
+- (BOOL) isEffectiveDarkAppearance
+{
+	NSAppearance *appearance = nil;
+	NSWindow *window = [mEditHost window];
+	if (window != nil)
+		appearance = [window effectiveAppearance];
+	if (appearance == nil && [NSApp respondsToSelector: @selector(effectiveAppearance)])
+		appearance = [NSApp effectiveAppearance];
+	if (appearance == nil || ![appearance respondsToSelector: @selector(bestMatchFromAppearancesWithNames:)])
+		return NO;
+
+	NSString *bestMatch = [appearance bestMatchFromAppearancesWithNames: [NSArray arrayWithObjects: NSAppearanceNameAqua, NSAppearanceNameDarkAqua, nil]];
+	return [bestMatch isEqualToString: NSAppearanceNameDarkAqua];
+}
+
+- (BOOL) shouldUseDarkTheme
+{
+	if (mThemeMode == 1)
+		return NO;
+	if (mThemeMode == 2)
+		return YES;
+	return [self isEffectiveDarkAppearance];
+}
+
+- (void) applyThemeToChrome
+{
+	BOOL dark = mCurrentThemeDark;
+	NSAppearance *forcedAppearance = nil;
+	if (mThemeMode == 1)
+		forcedAppearance = [NSAppearance appearanceNamed: NSAppearanceNameAqua];
+	else if (mThemeMode == 2)
+		forcedAppearance = [NSAppearance appearanceNamed: NSAppearanceNameDarkAqua];
+
+	NSWindow *mainWindow = [mEditHost window];
+	if (mainWindow != nil) {
+		[mainWindow setAppearance: forcedAppearance];
+		[mainWindow setBackgroundColor: nppThemeColor(dark, @"#1E1E1E", @"#F2F2F2")];
+	}
+
+	if (mSearchPanel != nil)
+		[mSearchPanel setAppearance: forcedAppearance];
+	if (mPreferencesWindow != nil)
+		[mPreferencesWindow setAppearance: forcedAppearance];
+
+	NSView *contentView = [mEditHost contentView];
+	if (contentView != nil) {
+		[contentView setWantsLayer: YES];
+		[[contentView layer] setBackgroundColor: [nppThemeColor(dark, @"#1E1E1E", @"#F2F2F2") CGColor]];
+	}
+
+	if (mSidebarContainer != nil) {
+		[mSidebarContainer setWantsLayer: YES];
+		[[mSidebarContainer layer] setBackgroundColor: [nppThemeColor(dark, @"#252526", @"#F4F4F4") CGColor]];
+	}
+
+	if (mProjectScrollView != nil) {
+		[mProjectScrollView setDrawsBackground: YES];
+		[mProjectScrollView setBackgroundColor: nppThemeColor(dark, @"#252526", @"#F4F4F4")];
+	}
+	if (mFunctionScrollView != nil) {
+		[mFunctionScrollView setDrawsBackground: YES];
+		[mFunctionScrollView setBackgroundColor: nppThemeColor(dark, @"#252526", @"#F4F4F4")];
+	}
+
+	if (mProjectTableView != nil) {
+		[mProjectTableView setBackgroundColor: nppThemeColor(dark, @"#252526", @"#F4F4F4")];
+		[mProjectTableView setGridColor: nppThemeColor(dark, @"#2F2F2F", @"#DDDDDD")];
+		if ([[mProjectTableView tableColumns] count] > 0)
+			[[[[mProjectTableView tableColumns] objectAtIndex: 0] dataCell] setTextColor: nppThemeColor(dark, @"#D4D4D4", @"#1E1E1E")];
+		[mProjectTableView reloadData];
+	}
+
+	if (mFunctionTableView != nil) {
+		[mFunctionTableView setBackgroundColor: nppThemeColor(dark, @"#252526", @"#F4F4F4")];
+		[mFunctionTableView setGridColor: nppThemeColor(dark, @"#2F2F2F", @"#DDDDDD")];
+		if ([[mFunctionTableView tableColumns] count] > 0)
+			[[[[mFunctionTableView tableColumns] objectAtIndex: 0] dataCell] setTextColor: nppThemeColor(dark, @"#D4D4D4", @"#1E1E1E")];
+		[mFunctionTableView reloadData];
+	}
+
+	if (mEditorHost != nil) {
+		[mEditorHost setWantsLayer: YES];
+		[[mEditorHost layer] setBackgroundColor: [nppThemeColor(dark, @"#1E1E1E", @"#FFFFFF") CGColor]];
+	}
+
+	if (mSearchResultContainer != nil) {
+		[mSearchResultContainer setWantsLayer: YES];
+		[[mSearchResultContainer layer] setBackgroundColor: [nppThemeColor(dark, @"#1E1E1E", @"#FFFFFF") CGColor]];
+	}
+	if (mSearchResultsHeaderView != nil) {
+		[mSearchResultsHeaderView setWantsLayer: YES];
+		[[mSearchResultsHeaderView layer] setBackgroundColor: [nppThemeColor(dark, @"#2D2D30", @"#ECECEC") CGColor]];
+	}
+	if (mSearchResultsSummaryLabel != nil)
+		[mSearchResultsSummaryLabel setTextColor: nppThemeColor(dark, @"#D4D4D4", @"#444444")];
+	if (mSearchResultsScrollView != nil) {
+		[mSearchResultsScrollView setDrawsBackground: YES];
+		[mSearchResultsScrollView setBackgroundColor: nppThemeColor(dark, @"#1E1E1E", @"#FFFFFF")];
+	}
+	if (mSearchResultsTableView != nil) {
+		[mSearchResultsTableView setBackgroundColor: nppThemeColor(dark, @"#1E1E1E", @"#FFFFFF")];
+		[mSearchResultsTableView setGridColor: nppThemeColor(dark, @"#2F2F2F", @"#DDDDDD")];
+		for (NSTableColumn *column in [mSearchResultsTableView tableColumns]) {
+			NSString *identifier = [column identifier];
+			if ([identifier isEqualToString: @"resultFile"])
+				[[column dataCell] setTextColor: nppThemeColor(dark, @"#DCDCAA", @"#2E5C9A")];
+			else if ([identifier isEqualToString: @"resultLine"])
+				[[column dataCell] setTextColor: nppThemeColor(dark, @"#9CDCFE", @"#8B0000")];
+			else
+				[[column dataCell] setTextColor: nppThemeColor(dark, @"#D4D4D4", @"#1E1E1E")];
+		}
+		[mSearchResultsTableView reloadData];
+	}
+
+	if (mStatusBar != nil) {
+		[mStatusBar setBackgroundColor: nppThemeColor(dark, @"#1A1A1A", @"#F3F3F3")];
+		[mStatusBar setTextColor: nppThemeColor(dark, @"#D4D4D4", @"#1E1E1E")];
+	}
+
+	NSDictionary *closeAttrs = [NSDictionary dictionaryWithObjectsAndKeys:
+		nppThemeColor(dark, @"#E0E0E0", @"#333333"), NSForegroundColorAttributeName,
+		[NSFont boldSystemFontOfSize: 9.5], NSFontAttributeName,
+		nil];
+	for (NSButton *closeButton in [mTabCloseButtons allValues]) {
+		[closeButton setAttributedTitle: [[[NSAttributedString alloc] initWithString: @"x" attributes: closeAttrs] autorelease]];
+	}
+}
+
+- (void) applyThemeToAllEditors
+{
+	for (NPPDocument *document in mDocuments) {
+		[self setupEditor: document.editor];
+		[self applyDisplayFlagsToEditor: document.editor];
+		[self applyLexerToDocument: document];
+	}
+
+	if (sciExtra != nil) {
+		[self setupEditor: sciExtra];
+		[self applyDisplayFlagsToEditor: sciExtra];
+		NPPDocument *document = [self currentDocument];
+		if (document != nil) {
+			NSString *lexerName = [self lexerNameForDocument: document];
+			if (lexerName != nil)
+				[self applyNotepadPlusPlusStyleForLexerName: lexerName editor: sciExtra dark: mCurrentThemeDark];
+			[sciExtra setGeneralProperty: SCI_COLOURISE parameter: 0 value: -1];
+		}
+	}
+
+	[self refreshExtraEditorState];
+	[self updateStatusBar];
+}
+
+- (void) applyThemeMode: (NSInteger) mode persist: (BOOL) persist
+{
+	NSInteger normalizedMode = mode;
+	if (normalizedMode < 0 || normalizedMode > 2)
+		normalizedMode = 0;
+
+	NSInteger previousMode = mThemeMode;
+	BOOL previousDark = mCurrentThemeDark;
+	mThemeMode = normalizedMode;
+	mCurrentThemeDark = [self shouldUseDarkTheme];
+	if (mPrefThemePopup != nil)
+		[mPrefThemePopup selectItemAtIndex: mThemeMode];
+
+	if (persist) {
+		NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+		[defaults setInteger: mThemeMode forKey: kNppMacPrefThemeModeKey];
+		[defaults synchronize];
+	}
+
+	[self applyThemeToChrome];
+	if (previousDark != mCurrentThemeDark || previousMode != mThemeMode)
+		[self applyThemeToAllEditors];
+	[self refreshUiToggles];
+}
+
+- (void) applyCurrentThemeIfNeeded
+{
+	if (mThemeMode != 0)
+		return;
+
+	BOOL effectiveDark = [self shouldUseDarkTheme];
+	if (effectiveDark == mCurrentThemeDark)
+		return;
+
+	[self applyThemeMode: mThemeMode persist: NO];
 }
 
 - (void) applyDisplayFlagsToEditor: (ScintillaView *) editor
@@ -2009,7 +2463,105 @@ willBeInsertedIntoToolbar: (BOOL) flag
 	if (pLexer != nullptr) {
 		[document.editor setReferenceProperty: SCI_SETILEXER parameter: 0 value: pLexer];
 		[document.editor setLexerProperty: @"fold" value: @"1"];
+		[self applyNotepadPlusPlusStyleForLexerName: lexerName editor: document.editor dark: mCurrentThemeDark];
 		[document.editor setGeneralProperty: SCI_COLOURISE parameter: 0 value: -1];
+	}
+}
+
+- (void) applyNotepadPlusPlusStyleForLexerName: (NSString *) lexerName editor: (ScintillaView *) editor dark: (BOOL) dark
+{
+	if (editor == nil || [lexerName length] == 0)
+		return;
+
+	if ([lexerName isEqualToString: @"cpp"]) {
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_C_COMMENT fromHTML: dark ? @"#6A9955" : @"#008000"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_C_COMMENTLINE fromHTML: dark ? @"#6A9955" : @"#008000"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_C_COMMENTDOC fromHTML: dark ? @"#6A9955" : @"#008000"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_C_COMMENTLINEDOC fromHTML: dark ? @"#6A9955" : @"#008000"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_C_NUMBER fromHTML: dark ? @"#B5CEA8" : @"#098658"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_C_WORD fromHTML: dark ? @"#569CD6" : @"#0000FF"];
+		[editor setGeneralProperty: SCI_STYLESETBOLD parameter: SCE_C_WORD value: 1];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_C_WORD2 fromHTML: dark ? @"#4EC9B0" : @"#267F99"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_C_STRING fromHTML: dark ? @"#CE9178" : @"#A31515"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_C_CHARACTER fromHTML: dark ? @"#CE9178" : @"#A31515"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_C_STRINGEOL fromHTML: dark ? @"#CE9178" : @"#A31515"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_C_VERBATIM fromHTML: dark ? @"#CE9178" : @"#A31515"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_C_REGEX fromHTML: dark ? @"#D16969" : @"#811F3F"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_C_PREPROCESSOR fromHTML: dark ? @"#C586C0" : @"#AF00DB"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_C_PREPROCESSORCOMMENT fromHTML: dark ? @"#6A9955" : @"#008000"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_C_PREPROCESSORCOMMENTDOC fromHTML: dark ? @"#6A9955" : @"#008000"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_C_OPERATOR fromHTML: dark ? @"#D4D4D4" : @"#1E1E1E"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_C_IDENTIFIER fromHTML: dark ? @"#9CDCFE" : @"#001080"];
+		return;
+	}
+
+	if ([lexerName isEqualToString: @"html"] || [lexerName isEqualToString: @"xml"]) {
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_H_TAG fromHTML: dark ? @"#569CD6" : @"#800000"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_H_TAGUNKNOWN fromHTML: dark ? @"#D16969" : @"#FF0000"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_H_TAGEND fromHTML: dark ? @"#569CD6" : @"#800000"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_H_ATTRIBUTE fromHTML: dark ? @"#9CDCFE" : @"#FF0000"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_H_ATTRIBUTEUNKNOWN fromHTML: dark ? @"#D16969" : @"#FF0000"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_H_NUMBER fromHTML: dark ? @"#B5CEA8" : @"#098658"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_H_DOUBLESTRING fromHTML: dark ? @"#CE9178" : @"#0000FF"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_H_SINGLESTRING fromHTML: dark ? @"#CE9178" : @"#0000FF"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_H_VALUE fromHTML: dark ? @"#CE9178" : @"#0000FF"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_H_COMMENT fromHTML: dark ? @"#6A9955" : @"#008000"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_H_ENTITY fromHTML: dark ? @"#4EC9B0" : @"#267F99"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_H_SGML_COMMAND fromHTML: dark ? @"#C586C0" : @"#AF00DB"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_H_SGML_1ST_PARAM fromHTML: dark ? @"#DCDCAA" : @"#795E26"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_H_SGML_DOUBLESTRING fromHTML: dark ? @"#CE9178" : @"#0000FF"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_H_SGML_SIMPLESTRING fromHTML: dark ? @"#CE9178" : @"#0000FF"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_H_SGML_COMMENT fromHTML: dark ? @"#6A9955" : @"#008000"];
+		return;
+	}
+
+	if ([lexerName isEqualToString: @"css"]) {
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_CSS_TAG fromHTML: dark ? @"#569CD6" : @"#800000"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_CSS_CLASS fromHTML: dark ? @"#4EC9B0" : @"#267F99"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_CSS_PSEUDOCLASS fromHTML: dark ? @"#DCDCAA" : @"#795E26"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_CSS_IDENTIFIER fromHTML: dark ? @"#9CDCFE" : @"#FF0000"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_CSS_VALUE fromHTML: dark ? @"#CE9178" : @"#0000FF"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_CSS_COMMENT fromHTML: dark ? @"#6A9955" : @"#008000"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_CSS_ID fromHTML: dark ? @"#4FC1FF" : @"#AF00DB"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_CSS_IMPORTANT fromHTML: dark ? @"#C586C0" : @"#AF00DB"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_CSS_DOUBLESTRING fromHTML: dark ? @"#CE9178" : @"#0000FF"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_CSS_SINGLESTRING fromHTML: dark ? @"#CE9178" : @"#0000FF"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_CSS_OPERATOR fromHTML: dark ? @"#D4D4D4" : @"#1E1E1E"];
+		return;
+	}
+
+	if ([lexerName isEqualToString: @"python"]) {
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_P_COMMENTLINE fromHTML: dark ? @"#6A9955" : @"#008000"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_P_COMMENTBLOCK fromHTML: dark ? @"#6A9955" : @"#008000"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_P_NUMBER fromHTML: dark ? @"#B5CEA8" : @"#098658"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_P_STRING fromHTML: dark ? @"#CE9178" : @"#A31515"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_P_CHARACTER fromHTML: dark ? @"#CE9178" : @"#A31515"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_P_TRIPLE fromHTML: dark ? @"#CE9178" : @"#A31515"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_P_TRIPLEDOUBLE fromHTML: dark ? @"#CE9178" : @"#A31515"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_P_WORD fromHTML: dark ? @"#569CD6" : @"#0000FF"];
+		[editor setGeneralProperty: SCI_STYLESETBOLD parameter: SCE_P_WORD value: 1];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_P_WORD2 fromHTML: dark ? @"#4EC9B0" : @"#267F99"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_P_CLASSNAME fromHTML: dark ? @"#4EC9B0" : @"#267F99"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_P_DEFNAME fromHTML: dark ? @"#DCDCAA" : @"#795E26"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_P_OPERATOR fromHTML: dark ? @"#D4D4D4" : @"#1E1E1E"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_P_IDENTIFIER fromHTML: dark ? @"#9CDCFE" : @"#001080"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_P_DECORATOR fromHTML: dark ? @"#C586C0" : @"#AF00DB"];
+		return;
+	}
+
+	if ([lexerName isEqualToString: @"sql"]) {
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_SQL_COMMENT fromHTML: dark ? @"#6A9955" : @"#008000"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_SQL_COMMENTLINE fromHTML: dark ? @"#6A9955" : @"#008000"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_SQL_COMMENTDOC fromHTML: dark ? @"#6A9955" : @"#008000"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_SQL_NUMBER fromHTML: dark ? @"#B5CEA8" : @"#098658"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_SQL_WORD fromHTML: dark ? @"#569CD6" : @"#0000FF"];
+		[editor setGeneralProperty: SCI_STYLESETBOLD parameter: SCE_SQL_WORD value: 1];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_SQL_WORD2 fromHTML: dark ? @"#4EC9B0" : @"#267F99"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_SQL_STRING fromHTML: dark ? @"#CE9178" : @"#A31515"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_SQL_CHARACTER fromHTML: dark ? @"#CE9178" : @"#A31515"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_SQL_OPERATOR fromHTML: dark ? @"#D4D4D4" : @"#1E1E1E"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_SQL_IDENTIFIER fromHTML: dark ? @"#9CDCFE" : @"#001080"];
+		[editor setColorProperty: SCI_STYLESETFORE parameter: SCE_SQL_QUOTEDIDENTIFIER fromHTML: dark ? @"#DCDCAA" : @"#795E26"];
 	}
 }
 
@@ -2064,24 +2616,30 @@ willBeInsertedIntoToolbar: (BOOL) flag
 
 - (void) setupEditor: (ScintillaView *) editor
 {
+	BOOL dark = mCurrentThemeDark;
+
 	[editor suspendDrawing: YES];
 
 	[editor setGeneralProperty: SCI_SETCODEPAGE parameter: SC_CP_UTF8 value: 0];
 	[editor setStringProperty: SCI_STYLESETFONT parameter: STYLE_DEFAULT value: @"Menlo"];
 	[editor setGeneralProperty: SCI_STYLESETSIZE parameter: STYLE_DEFAULT value: 13];
-	[editor setColorProperty: SCI_STYLESETFORE parameter: STYLE_DEFAULT value: [NSColor textColor]];
-	[editor setColorProperty: SCI_STYLESETBACK parameter: STYLE_DEFAULT value: [NSColor textBackgroundColor]];
+	[editor setColorProperty: SCI_STYLESETFORE parameter: STYLE_DEFAULT fromHTML: dark ? @"#D4D4D4" : @"#1E1E1E"];
+	[editor setColorProperty: SCI_STYLESETBACK parameter: STYLE_DEFAULT fromHTML: dark ? @"#3C3C3C" : @"#FFFFFF"];
 	[editor setGeneralProperty: SCI_STYLECLEARALL parameter: 0 value: 0];
 
 	[editor setGeneralProperty: SCI_SETMARGINTYPEN parameter: 0 value: SC_MARGIN_NUMBER];
 	[editor setGeneralProperty: SCI_SETMARGINWIDTHN parameter: 0 value: 48];
-	[editor setColorProperty: SCI_STYLESETFORE parameter: STYLE_LINENUMBER fromHTML: @"#666666"];
-	[editor setColorProperty: SCI_STYLESETBACK parameter: STYLE_LINENUMBER fromHTML: @"#F3F3F3"];
+	[editor setColorProperty: SCI_STYLESETFORE parameter: STYLE_LINENUMBER fromHTML: dark ? @"#858585" : @"#7F7F7F"];
+	[editor setColorProperty: SCI_STYLESETBACK parameter: STYLE_LINENUMBER fromHTML: dark ? @"#2B2B2B" : @"#F3F3F3"];
+	[editor setColorProperty: SCI_SETMARGINBACKN parameter: 0 fromHTML: dark ? @"#2B2B2B" : @"#F3F3F3"];
 
 	[editor setGeneralProperty: SCI_SETMARGINTYPEN parameter: 1 value: SC_MARGIN_SYMBOL];
 	[editor setGeneralProperty: SCI_SETMARGINMASKN parameter: 1 value: SC_MASK_FOLDERS];
 	[editor setGeneralProperty: SCI_SETMARGINWIDTHN parameter: 1 value: 16];
 	[editor setGeneralProperty: SCI_SETMARGINSENSITIVEN parameter: 1 value: 1];
+	[editor setColorProperty: SCI_SETMARGINBACKN parameter: 1 fromHTML: dark ? @"#2B2B2B" : @"#F3F3F3"];
+	[editor setColorProperty: SCI_SETFOLDMARGINCOLOUR parameter: 1 fromHTML: dark ? @"#2B2B2B" : @"#F3F3F3"];
+	[editor setColorProperty: SCI_SETFOLDMARGINHICOLOUR parameter: 1 fromHTML: dark ? @"#2B2B2B" : @"#F3F3F3"];
 
 	[editor setGeneralProperty: SCI_MARKERDEFINE parameter: SC_MARKNUM_FOLDEROPEN value: SC_MARK_BOXMINUS];
 	[editor setGeneralProperty: SCI_MARKERDEFINE parameter: SC_MARKNUM_FOLDER value: SC_MARK_BOXPLUS];
@@ -2092,8 +2650,8 @@ willBeInsertedIntoToolbar: (BOOL) flag
 	[editor setGeneralProperty: SCI_MARKERDEFINE parameter: SC_MARKNUM_FOLDERMIDTAIL value: SC_MARK_TCORNER];
 
 	for (int marker = 25; marker < 32; ++marker) {
-		[editor setColorProperty: SCI_MARKERSETFORE parameter: marker fromHTML: @"#FFFFFF"];
-		[editor setColorProperty: SCI_MARKERSETBACK parameter: marker fromHTML: @"#6F6F6F"];
+		[editor setColorProperty: SCI_MARKERSETFORE parameter: marker fromHTML: dark ? @"#F0F0F0" : @"#555555"];
+		[editor setColorProperty: SCI_MARKERSETBACK parameter: marker fromHTML: dark ? @"#4A4A4A" : @"#DADADA"];
 	}
 
 	[editor setGeneralProperty: SCI_SETUSETABS parameter: 0 value: 0];
@@ -2102,8 +2660,17 @@ willBeInsertedIntoToolbar: (BOOL) flag
 	[editor setGeneralProperty: SCI_SETINDENTATIONGUIDES parameter: SC_IV_LOOKBOTH value: 0];
 	[editor setGeneralProperty: SCI_SETWRAPMODE parameter: SC_WRAP_NONE value: 0];
 	[editor setGeneralProperty: SCI_SETSCROLLWIDTHTRACKING parameter: 1 value: 0];
-
-	[editor setColorProperty: SCI_SETSELBACK parameter: 1 value: [NSColor selectedTextBackgroundColor]];
+	[editor setGeneralProperty: SCI_SETMARGINLEFT parameter: 0 value: 2];
+	[editor setGeneralProperty: SCI_SETMARGINRIGHT parameter: 0 value: 2];
+	[editor setColorProperty: SCI_STYLESETFORE parameter: STYLE_INDENTGUIDE fromHTML: dark ? @"#404040" : @"#D0D0D0"];
+	[editor setColorProperty: SCI_STYLESETBACK parameter: STYLE_INDENTGUIDE fromHTML: dark ? @"#3C3C3C" : @"#FFFFFF"];
+	[editor setColorProperty: SCI_SETSELBACK parameter: 1 fromHTML: dark ? @"#264F78" : @"#ADD6FF"];
+	[editor setColorProperty: SCI_SETCARETFORE parameter: 0 fromHTML: dark ? @"#FFFFFF" : @"#1E1E1E"];
+	[editor setGeneralProperty: SCI_SETCARETLINEVISIBLE parameter: 1 value: 0];
+	[editor setColorProperty: SCI_SETCARETLINEBACK parameter: 0 fromHTML: dark ? @"#2A2D2E" : @"#F2F8FF"];
+	[editor setGeneralProperty: SCI_SETCARETLINEBACKALPHA parameter: 80 value: 0];
+	[editor setColorProperty: SCI_SETWHITESPACEFORE parameter: 1 fromHTML: dark ? @"#5C5C5C" : @"#C0C0C0"];
+	[editor setColorProperty: SCI_SETWHITESPACEBACK parameter: 1 fromHTML: dark ? @"#3C3C3C" : @"#FFFFFF"];
 	[editor setGeneralProperty: SCI_SETMULTIPLESELECTION parameter: 1 value: 0];
 	[editor setLexerProperty: @"fold" value: @"1"];
 	[editor setLexerProperty: @"fold.compact" value: @"0"];
@@ -3438,10 +4005,15 @@ willBeInsertedIntoToolbar: (BOOL) flag
 {
 	if (!mLiveTailEnabled)
 		return;
+	if (mRefreshingLiveTail)
+		return;
 
 	NPPDocument *document = [self currentDocument];
 	if (document == nil || [document.filePath length] == 0)
 		return;
+
+	mRefreshingLiveTail = YES;
+	@try {
 
 	NSString *path = [document.filePath stringByStandardizingPath];
 	if (mLiveTailPath == nil || ![mLiveTailPath isEqualToString: path]) {
@@ -3462,6 +4034,7 @@ willBeInsertedIntoToolbar: (BOOL) flag
 		return;
 
 	BOOL reloadedAll = NO;
+	BOOL didApplyTailUpdate = NO;
 	if (fileSize < mLiveTailKnownLength) {
 		NSStringEncoding detectedEncoding = document.encoding;
 		NSString *content = nil;
@@ -3470,6 +4043,7 @@ willBeInsertedIntoToolbar: (BOOL) flag
 			document.encoding = detectedEncoding;
 			[self applyLexerToDocument: document];
 			reloadedAll = YES;
+			didApplyTailUpdate = YES;
 		}
 	} else if (fileSize > mLiveTailKnownLength) {
 		NSFileHandle *handle = [NSFileHandle fileHandleForReadingAtPath: path];
@@ -3495,6 +4069,7 @@ willBeInsertedIntoToolbar: (BOOL) flag
 				NSData *utf8 = [deltaText dataUsingEncoding: NSUTF8StringEncoding allowLossyConversion: YES];
 				if ([utf8 length] > 0) {
 					[document.editor message: SCI_APPENDTEXT wParam: [utf8 length] lParam: (sptr_t)[utf8 bytes]];
+					didApplyTailUpdate = YES;
 					long endPos = [document.editor getGeneralProperty: SCI_GETLENGTH parameter: 0];
 					[document.editor setGeneralProperty: SCI_GOTOPOS parameter: endPos value: 0];
 					[document.editor setGeneralProperty: SCI_SCROLLCARET parameter: 0 value: 0];
@@ -3507,6 +4082,7 @@ willBeInsertedIntoToolbar: (BOOL) flag
 					document.encoding = detectedEncoding;
 					[self applyLexerToDocument: document];
 					reloadedAll = YES;
+					didApplyTailUpdate = YES;
 				}
 			}
 		}
@@ -3518,13 +4094,18 @@ willBeInsertedIntoToolbar: (BOOL) flag
 		[document.editor setGeneralProperty: SCI_SCROLLCARET parameter: 0 value: 0];
 	}
 
-	[document.editor setGeneralProperty: SCI_SETSAVEPOINT parameter: 0 value: 0];
-	document.dirty = NO;
-	document.metadataDirty = NO;
+	if (didApplyTailUpdate) {
+		[document.editor setGeneralProperty: SCI_SETSAVEPOINT parameter: 0 value: 0];
+		document.dirty = NO;
+		document.metadataDirty = NO;
+	}
 
 	mLiveTailKnownLength = fileSize;
 	[mLiveTailLastModificationDate release];
 	mLiveTailLastModificationDate = [modifiedDate copy];
+	} @finally {
+		mRefreshingLiveTail = NO;
+	}
 }
 
 - (IBAction) toggleSidebar: (id) sender
@@ -3542,6 +4123,24 @@ willBeInsertedIntoToolbar: (BOOL) flag
 		[mWorkspaceSplitView adjustSubviews];
 	}
 	[self refreshUiToggles];
+}
+
+- (IBAction) setThemeSystem: (id) sender
+{
+	#pragma unused(sender)
+	[self applyThemeMode: 0 persist: YES];
+}
+
+- (IBAction) setThemeLight: (id) sender
+{
+	#pragma unused(sender)
+	[self applyThemeMode: 1 persist: YES];
+}
+
+- (IBAction) setThemeDark: (id) sender
+{
+	#pragma unused(sender)
+	[self applyThemeMode: 2 persist: YES];
 }
 
 - (IBAction) openProjectFolder: (id) sender
@@ -3608,6 +4207,19 @@ willBeInsertedIntoToolbar: (BOOL) flag
 	[mPrefDefaultLineNumbers setTitle: @"Default line numbers for new files"];
 	[content addSubview: mPrefDefaultLineNumbers];
 
+	NSTextField *themeLabel = [[[NSTextField alloc] initWithFrame: NSMakeRect(24, 94, 80, 20)] autorelease];
+	[themeLabel setEditable: NO];
+	[themeLabel setBordered: NO];
+	[themeLabel setDrawsBackground: NO];
+	[themeLabel setStringValue: @"Theme:"];
+	[content addSubview: themeLabel];
+
+	mPrefThemePopup = [[[NSPopUpButton alloc] initWithFrame: NSMakeRect(108, 88, 170, 28) pullsDown: NO] autorelease];
+	[mPrefThemePopup addItemWithTitle: @"System"];
+	[mPrefThemePopup addItemWithTitle: @"Light"];
+	[mPrefThemePopup addItemWithTitle: @"Dark"];
+	[content addSubview: mPrefThemePopup];
+
 	NSButton *applyButton = [[[NSButton alloc] initWithFrame: NSMakeRect(330, 18, 80, 32)] autorelease];
 	[applyButton setTitle: @"Apply"];
 	[applyButton setTarget: self];
@@ -3632,6 +4244,7 @@ willBeInsertedIntoToolbar: (BOOL) flag
 	[mPrefShowSidebar setState: [defaults objectForKey: kNppMacPrefShowSidebarKey] ? [defaults boolForKey: kNppMacPrefShowSidebarKey] : YES];
 	[mPrefDefaultWordWrap setState: [defaults objectForKey: kNppMacPrefDefaultWordWrapKey] ? [defaults boolForKey: kNppMacPrefDefaultWordWrapKey] : NO];
 	[mPrefDefaultLineNumbers setState: [defaults objectForKey: kNppMacPrefDefaultLineNumbersKey] ? [defaults boolForKey: kNppMacPrefDefaultLineNumbersKey] : YES];
+	[mPrefThemePopup selectItemAtIndex: mThemeMode];
 	[mPreferencesWindow makeKeyAndOrderFront: nil];
 }
 
@@ -3644,6 +4257,10 @@ willBeInsertedIntoToolbar: (BOOL) flag
 	[defaults setBool: ([mPrefShowSidebar state] == NSOnState) forKey: kNppMacPrefShowSidebarKey];
 	[defaults setBool: ([mPrefDefaultWordWrap state] == NSOnState) forKey: kNppMacPrefDefaultWordWrapKey];
 	[defaults setBool: ([mPrefDefaultLineNumbers state] == NSOnState) forKey: kNppMacPrefDefaultLineNumbersKey];
+	NSInteger selectedTheme = [mPrefThemePopup indexOfSelectedItem];
+	if (selectedTheme < 0 || selectedTheme > 2)
+		selectedTheme = mThemeMode;
+	[defaults setInteger: selectedTheme forKey: kNppMacPrefThemeModeKey];
 	[defaults synchronize];
 
 	BOOL toolbarVisible = ([mPrefShowToolbar state] == NSOnState);
@@ -3664,6 +4281,8 @@ willBeInsertedIntoToolbar: (BOOL) flag
 	BOOL sidebarVisible = ([mPrefShowSidebar state] == NSOnState);
 	if (mSidebarVisible != sidebarVisible)
 		[self toggleSidebar: nil];
+
+	[self applyThemeMode: selectedTheme persist: NO];
 }
 
 - (void) preferencesApplyAndClose: (id) sender
@@ -5026,6 +5645,9 @@ willBeInsertedIntoToolbar: (BOOL) flag
 	}
 
 	if (action == @selector(findInFiles:) ||
+		action == @selector(setThemeSystem:) ||
+		action == @selector(setThemeLight:) ||
+		action == @selector(setThemeDark:) ||
 		action == @selector(toggleWordWrap:) ||
 		action == @selector(toggleWhitespaceVisibility:) ||
 		action == @selector(toggleEolVisibility:) ||
@@ -5045,6 +5667,12 @@ willBeInsertedIntoToolbar: (BOOL) flag
 			[menuItem setState: mDocumentMapVisible ? NSOnState : NSOffState];
 		if (action == @selector(toggleAutosave:))
 			[menuItem setState: mAutosaveEnabled ? NSOnState : NSOffState];
+		if (action == @selector(setThemeSystem:))
+			[menuItem setState: (mThemeMode == 0) ? NSOnState : NSOffState];
+		if (action == @selector(setThemeLight:))
+			[menuItem setState: (mThemeMode == 1) ? NSOnState : NSOffState];
+		if (action == @selector(setThemeDark:))
+			[menuItem setState: (mThemeMode == 2) ? NSOnState : NSOffState];
 		if (action == @selector(toggleLiveTailCurrentFile:))
 			return (document != nil);
 		return YES;
@@ -5121,8 +5749,15 @@ willBeInsertedIntoToolbar: (BOOL) flag
 		[self ensureExtraEditorForCurrentDocument];
 	else
 		[self removeExtraEditor];
+	[self syncTabCloseButtons];
 	[self updateWindowTitle];
 	[self refreshUiToggles];
+}
+
+- (void) tabViewDidChangeNumberOfTabViewItems: (NSTabView *) tabView
+{
+	#pragma unused(tabView)
+	[self syncTabCloseButtons];
 }
 
 - (void) notification: (SCNotification *) notification
@@ -5155,6 +5790,9 @@ willBeInsertedIntoToolbar: (BOOL) flag
 
 		[mMacroSteps addObject: step];
 	}
+
+	if (mRefreshingEditorState || mRefreshingLiveTail)
+		return;
 
 	[self refreshEditorState: nil];
 }

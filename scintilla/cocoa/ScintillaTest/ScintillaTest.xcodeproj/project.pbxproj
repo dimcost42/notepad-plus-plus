@@ -7,13 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		1DDD58160DA1D0A300B32029 /* MainMenu.xib in Resources */ = {isa = PBXBuildFile; fileRef = 1DDD58140DA1D0A300B32029 /* MainMenu.xib */; };
-		271FA52C0F850BE20033D021 /* AppController.mm in Sources */ = {isa = PBXBuildFile; fileRef = 271FA52B0F850BE20033D021 /* AppController.mm */; };
-		2791F4490FC1A8E9009DBCF9 /* TestData.sql in Resources */ = {isa = PBXBuildFile; fileRef = 2791F4480FC1A8E9009DBCF9 /* TestData.sql */; };
-		286F8E5125F8474400EC8D60 /* Scintilla.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 286F8E4E25F845B000EC8D60 /* Scintilla.framework */; };
-		286F8E5225F8474400EC8D60 /* Scintilla.framework in CopyFiles */ = {isa = PBXBuildFile; fileRef = 286F8E4E25F845B000EC8D60 /* Scintilla.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
-		286F8E7525F8506B00EC8D60 /* liblexilla.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 286F8E7325F8504800EC8D60 /* liblexilla.dylib */; };
-		286F8E7625F8506B00EC8D60 /* liblexilla.dylib in CopyFiles */ = {isa = PBXBuildFile; fileRef = 286F8E7325F8504800EC8D60 /* liblexilla.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+			1DDD58160DA1D0A300B32029 /* MainMenu.xib in Resources */ = {isa = PBXBuildFile; fileRef = 1DDD58140DA1D0A300B32029 /* MainMenu.xib */; };
+			271FA52C0F850BE20033D021 /* AppController.mm in Sources */ = {isa = PBXBuildFile; fileRef = 271FA52B0F850BE20033D021 /* AppController.mm */; };
+			2791F4490FC1A8E9009DBCF9 /* TestData.sql in Resources */ = {isa = PBXBuildFile; fileRef = 2791F4480FC1A8E9009DBCF9 /* TestData.sql */; };
+			B3D1E6F22A9C4D7200A10001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B3D1E6F12A9C4D7200A10001 /* Assets.xcassets */; };
+			286F8E5125F8474400EC8D60 /* Scintilla.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 286F8E4E25F845B000EC8D60 /* Scintilla.framework */; };
+			286F8E5225F8474400EC8D60 /* Scintilla.framework in CopyFiles */ = {isa = PBXBuildFile; fileRef = 286F8E4E25F845B000EC8D60 /* Scintilla.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+			286F8E7525F8506B00EC8D60 /* liblexilla.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 286F8E7325F8504800EC8D60 /* liblexilla.dylib */; };
+			286F8E7625F8506B00EC8D60 /* liblexilla.dylib in CopyFiles */ = {isa = PBXBuildFile; fileRef = 286F8E7325F8504800EC8D60 /* liblexilla.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		8D11072B0486CEB800E47090 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = 089C165CFE840E0CC02AAC07 /* InfoPlist.strings */; };
 		8D11072D0486CEB800E47090 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = 29B97316FDCFA39411CA2CEA /* main.m */; settings = {ATTRIBUTES = (); }; };
 		8D11072F0486CEB800E47090 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1058C7A1FEA54F0111CA2CBB /* Cocoa.framework */; };
@@ -61,11 +62,12 @@
 		28E78A40224C33FE00456881 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		28E78A41224C33FE00456881 /* en */ = {isa = PBXFileReference; lastKnownFileType = file.xib; name = en; path = en.lproj/MainMenu.xib; sourceTree = "<group>"; };
 		29B97316FDCFA39411CA2CEA /* main.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
-		29B97324FDCFA39411CA2CEA /* AppKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppKit.framework; path = /System/Library/Frameworks/AppKit.framework; sourceTree = "<absolute>"; };
-		29B97325FDCFA39411CA2CEA /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = /System/Library/Frameworks/Foundation.framework; sourceTree = "<absolute>"; };
-		32CA4F630368D1EE00C91783 /* ScintillaTest_Prefix.pch */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ScintillaTest_Prefix.pch; sourceTree = "<group>"; };
-		8D1107310486CEB800E47090 /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		8D1107320486CEB800E47090 /* ScintillaTest.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ScintillaTest.app; sourceTree = BUILT_PRODUCTS_DIR; };
+			29B97324FDCFA39411CA2CEA /* AppKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppKit.framework; path = /System/Library/Frameworks/AppKit.framework; sourceTree = "<absolute>"; };
+			29B97325FDCFA39411CA2CEA /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = /System/Library/Frameworks/Foundation.framework; sourceTree = "<absolute>"; };
+			32CA4F630368D1EE00C91783 /* ScintillaTest_Prefix.pch */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ScintillaTest_Prefix.pch; sourceTree = "<group>"; };
+			8D1107310486CEB800E47090 /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+			8D1107320486CEB800E47090 /* ScintillaTest.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ScintillaTest.app; sourceTree = BUILT_PRODUCTS_DIR; };
+			B3D1E6F12A9C4D7200A10001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -156,13 +158,14 @@
 			name = "Other Sources";
 			sourceTree = "<group>";
 		};
-		29B97317FDCFA39411CA2CEA /* Resources */ = {
-			isa = PBXGroup;
-			children = (
-				2791F4480FC1A8E9009DBCF9 /* TestData.sql */,
-				8D1107310486CEB800E47090 /* Info.plist */,
-				089C165CFE840E0CC02AAC07 /* InfoPlist.strings */,
-				1DDD58140DA1D0A300B32029 /* MainMenu.xib */,
+			29B97317FDCFA39411CA2CEA /* Resources */ = {
+				isa = PBXGroup;
+				children = (
+					B3D1E6F12A9C4D7200A10001 /* Assets.xcassets */,
+					2791F4480FC1A8E9009DBCF9 /* TestData.sql */,
+					8D1107310486CEB800E47090 /* Info.plist */,
+					089C165CFE840E0CC02AAC07 /* InfoPlist.strings */,
+					1DDD58140DA1D0A300B32029 /* MainMenu.xib */,
 			);
 			name = Resources;
 			sourceTree = "<group>";
@@ -252,14 +255,15 @@
 /* End PBXReferenceProxy section */
 
 /* Begin PBXResourcesBuildPhase section */
-		8D1107290486CEB800E47090 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				8D11072B0486CEB800E47090 /* InfoPlist.strings in Resources */,
-				1DDD58160DA1D0A300B32029 /* MainMenu.xib in Resources */,
-				2791F4490FC1A8E9009DBCF9 /* TestData.sql in Resources */,
-			);
+			8D1107290486CEB800E47090 /* Resources */ = {
+				isa = PBXResourcesBuildPhase;
+				buildActionMask = 2147483647;
+				files = (
+					B3D1E6F22A9C4D7200A10001 /* Assets.xcassets in Resources */,
+					8D11072B0486CEB800E47090 /* InfoPlist.strings in Resources */,
+					1DDD58160DA1D0A300B32029 /* MainMenu.xib in Resources */,
+					2791F4490FC1A8E9009DBCF9 /* TestData.sql in Resources */,
+				);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
@@ -296,13 +300,14 @@
 /* End PBXVariantGroup section */
 
 /* Begin XCBuildConfiguration section */
-		C01FCF4B08A954540054247B /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ALWAYS_SEARCH_USER_PATHS = NO;
-				CLANG_ENABLE_OBJC_WEAK = YES;
-				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = NO;
-				CODE_SIGN_IDENTITY = "-";
+			C01FCF4B08A954540054247B /* Debug */ = {
+				isa = XCBuildConfiguration;
+				buildSettings = {
+					ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+					ALWAYS_SEARCH_USER_PATHS = NO;
+					CLANG_ENABLE_OBJC_WEAK = YES;
+					CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = NO;
+					CODE_SIGN_IDENTITY = "-";
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = NO;
 				DEAD_CODE_STRIPPING = YES;
@@ -330,13 +335,14 @@
 			};
 			name = Debug;
 		};
-		C01FCF4C08A954540054247B /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ALWAYS_SEARCH_USER_PATHS = NO;
-				CLANG_ENABLE_OBJC_WEAK = YES;
-				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = NO;
-				CODE_SIGN_IDENTITY = "-";
+			C01FCF4C08A954540054247B /* Release */ = {
+				isa = XCBuildConfiguration;
+				buildSettings = {
+					ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+					ALWAYS_SEARCH_USER_PATHS = NO;
+					CLANG_ENABLE_OBJC_WEAK = YES;
+					CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = NO;
+					CODE_SIGN_IDENTITY = "-";
 				COMBINE_HIDPI_IMAGES = YES;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";

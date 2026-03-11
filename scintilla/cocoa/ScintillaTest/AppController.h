@@ -33,7 +33,13 @@
   NSView *mEditorHost;
   NSSplitView *mEditorSplitView;
   NSView *mEditorTabContainer;
+  NSView *mSidebarContainer;
+  NSScrollView *mProjectScrollView;
+  NSScrollView *mFunctionScrollView;
   NSView *mSearchResultContainer;
+  NSView *mSearchResultsHeaderView;
+  NSScrollView *mSearchResultsScrollView;
+  NSButton *mSearchResultsCloseButton;
   NSTableView *mSearchResultsTableView;
   NSTextField *mSearchResultsSummaryLabel;
   NSMutableArray *mSearchResultEntries;
@@ -48,6 +54,7 @@
 
   NSTextField *mStatusBar;
   NSToolbar *mMainToolbar;
+  NSButton *mLiveTailToolbarButton;
   BOOL mSidebarVisible;
   BOOL mStatusBarVisible;
 
@@ -69,8 +76,10 @@
   NSButton *mPrefShowSidebar;
   NSButton *mPrefDefaultWordWrap;
   NSButton *mPrefDefaultLineNumbers;
+  NSPopUpButton *mPrefThemePopup;
 
   NSTabView *mTabView;
+  NSMutableDictionary *mTabCloseButtons;
   NSMutableArray *mDocuments;
   NSString *mLastSearch;
   void *mLexillaDL;
@@ -81,10 +90,14 @@
   BOOL mShowWhitespace;
   BOOL mShowEol;
   BOOL mShowLineNumbers;
+  NSInteger mThemeMode;
+  BOOL mCurrentThemeDark;
   BOOL mLiveTailEnabled;
   NSString *mLiveTailPath;
   unsigned long long mLiveTailKnownLength;
   NSDate *mLiveTailLastModificationDate;
+  BOOL mRefreshingLiveTail;
+  BOOL mRefreshingEditorState;
   BOOL mSplitViewEnabled;
   BOOL mDocumentMapVisible;
   BOOL mAutosaveEnabled;
@@ -152,6 +165,9 @@
 - (IBAction) setEncodingEucKr: (id) sender;
 
 - (IBAction) toggleSidebar: (id) sender;
+- (IBAction) setThemeSystem: (id) sender;
+- (IBAction) setThemeLight: (id) sender;
+- (IBAction) setThemeDark: (id) sender;
 - (IBAction) openProjectFolder: (id) sender;
 - (IBAction) showPreferences: (id) sender;
 
